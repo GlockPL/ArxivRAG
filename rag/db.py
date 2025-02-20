@@ -2,7 +2,7 @@ import weaviate
 import logging
 
 from weaviate.collections.classes.config import Configure
-from weaviate.collections.classes.filters import Filter
+import weaviate.classes as wvc
 
 from rag.rag.settings import Settings
 
@@ -26,11 +26,25 @@ class WeaviateDB:
         coll = self.client.collections.create(
             name=self.settings.collection,
             vectorizer_config=Configure.Vectorizer.text2vec_google_aistudio(self.settings.embedder),
-            generative_config=Configure.Generative.google(project_id="id", model_id=self.settings.model)
+            generative_config=Configure.Generative.google(project_id="id", model_id=self.settings.model),
+            properties=[
+                wvc.config.Property(
+                    name="source",
+                    data_type=wvc.config.DataType.TEXT,
+                ),
+                wvc.config.Property(
+                    name="section_title",
+                    data_type=wvc.config.DataType.TEXT,
+                ),
+                wvc.config.Property(
+                    name="section_number",
+                    data_type=wvc.config.DataType.INT,
+                ),
+                wvc.config.Property(
+                    name="authors",
+                    data_type=wvc.config.DataType.TEXT,
+                )
+            ]
         )
         return coll
 
-    def delete_source(self, source):
-        coll = self.client.collections.get(self.settings.collection)
-        resp = coll.data.delete_many(where=Filter.by_property(name="source").equal(source))
-        return resp
