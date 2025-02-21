@@ -17,3 +17,9 @@ next
 ```
 poetry run ./rag/indexing.py
 ```
+### UI
+UI is based on streamlit.  
+To lauch simply type:
+```commandline
+poetry run streamlit run ./rag/ui.py
+```
