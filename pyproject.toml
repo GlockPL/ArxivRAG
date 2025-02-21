@@ -11,6 +11,9 @@ pydantic = "^2.10.6"
 pydantic-settings = "^2.7.1"
 weaviate-client = "^4.11.0"
 langchain-google-genai = "^2.0.9"
+streamlit = "^1.42.2"
+langgraph = "^0.2.74"
+langchain = "^0.3.19"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"

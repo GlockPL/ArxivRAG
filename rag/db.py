@@ -4,7 +4,7 @@ import logging
 from weaviate.collections.classes.config import Configure
 import weaviate.classes as wvc
 
-from rag.rag.settings import Settings
+from settings import Settings
 
 class WeaviateDB:
     def __init__(self):

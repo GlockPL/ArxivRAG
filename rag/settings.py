@@ -12,3 +12,4 @@ class Settings(BaseSettings):
     collection: str = Field("Arxiv")
     json_dir: Path = Path('./rag/json_gemini/')
     temperature: float = Field(0.0)
+    text_key: str = Field("page_content")

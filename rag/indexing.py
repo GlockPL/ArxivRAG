@@ -6,13 +6,13 @@ from tqdm import tqdm
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.documents import Document
 from langchain_weaviate.vectorstores import WeaviateVectorStore
 from weaviate.collections.classes.filters import Filter
 
-from rag.rag.settings import Settings
-from rag.rag.db import WeaviateDB
+from settings import Settings
+from db import WeaviateDB
+from utils import get_llm
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -31,8 +31,7 @@ class ContextualIndexing:
         Please give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else. 
         """
 
-        self.llm = ChatGoogleGenerativeAI(model=self.settings.model, temperature=self.settings.temperature,
-                                          max_retries=2)
+        self.llm = get_llm()
 
     def delete_source(self, source):
         with WeaviateDB() as wdb:
@@ -108,7 +107,7 @@ class ContextualIndexing:
 
     def insert_documents(self, ):
         with WeaviateDB() as wdb:
-            wvs = WeaviateVectorStore(wdb, index_name=self.settings.collection, text_key="page_content")
+            wvs = WeaviateVectorStore(wdb, index_name=self.settings.collection, text_key=self.settings.text_key)
             for docs in self.create_documents():
                 wvs.add_documents(documents=docs)
 
