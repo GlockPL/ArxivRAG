@@ -3,7 +3,6 @@ from typing import List, Generator
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.graph import END
@@ -11,17 +10,16 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel
 from db import WeaviateDB
-from utils import get_llm, get_embeddings  # Make sure these are correct
+from utils import get_llm, get_embeddings
 from settings import Settings
 
 
-class RetrieveInput(BaseModel):  # Correct Pydantic Model
+class RetrieveInput(BaseModel):
     query: str
 
 
-llm = get_llm() # Make sure this returns a strong model
+llm = get_llm()
 
-# llm = ChatOpenAI(model="gpt-4o")
 
 @tool(response_format="content_and_artifact", args_schema=RetrieveInput)
 def retrieve(query: str) -> tuple[str, List[Document]]:
@@ -37,7 +35,7 @@ def retrieve(query: str) -> tuple[str, List[Document]]:
             index_name=settings.collection,
             text_key=settings.text_key,
         )
-        retrieved_docs = wvs.similarity_search(query, k=8)
+        retrieved_docs = wvs.similarity_search(query, k=10)
         serialized = "\n\n".join(
             f"Content: {doc.page_content}\n Source: {doc.metadata.get('source')}"
             for doc in retrieved_docs
