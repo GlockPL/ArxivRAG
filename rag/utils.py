@@ -11,7 +11,7 @@ def get_llm():
 
 def get_oai_llm():
     settings = Settings()
-    llm = ChatOpenAI(model=settings.model, temperature=settings.temperature, max_retries=2)
+    llm = ChatOpenAI(model=settings.model_oai, temperature=settings.temperature, max_retries=2)
     return llm
 
 def get_embeddings():

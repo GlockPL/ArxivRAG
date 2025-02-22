@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_weaviate import WeaviateVectorStore
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.graph import END
 from langgraph.graph.state import CompiledStateGraph
@@ -45,10 +46,12 @@ def retrieve(query: str) -> tuple[str, List[Document]]:
 
 def query_or_respond(state: MessagesState):
     """Generate tool call for retrieval or respond."""
+    print(state)
     llm_with_tools = llm.bind_tools([retrieve])
     response = llm_with_tools.invoke(state["messages"])
     # MessagesState appends messages to state instead of overwriting
     return {"messages": [response]}
+
 
 def generate(state: MessagesState):
     """Generate answer."""
@@ -69,7 +72,7 @@ def generate(state: MessagesState):
 
     system_message_content = f"""
         Use the following pieces of context to answer the question at the end.
-        Each piece of context will have at the end source with arxiv index, list all of this sources and the end of your response. 
+        Each piece of context will have at the end source with arxiv index, list all of this sources and the end of your response.
         If you can't answer based on the context ask if you user wants to answer based on your knowledge.
         {docs_content}"""
 
@@ -82,9 +85,9 @@ def generate(state: MessagesState):
     ]
 
     prompt = [SystemMessage(content=system_message_content)] + conversation_messages
+    print(prompt)
     response = llm.invoke(prompt)
     return {"messages": [response]}
-
 
 def create_graph():
     graph_builder = StateGraph(MessagesState)
@@ -104,18 +107,21 @@ def create_graph():
     graph_builder.add_edge("tools", "generate")
     graph_builder.add_edge("generate", END)
 
-    graph = graph_builder.compile()
-    graph.get_graph().draw_mermaid_png(output_file_path="graph.png") # Optional
+    memory = MemorySaver()
+    graph = graph_builder.compile(checkpointer=memory)
+    graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional
     return graph
 
 
 def stream(graph: CompiledStateGraph, query: str) -> Generator[str, None, None]:
     """Streams the final response tokens."""
-    input_message = HumanMessage(content=query)
-    for chunk, metadata in graph.stream({"messages": [input_message]}, stream_mode="messages"):
+    config = {"configurable": {"thread_id": "1"}}
+    for chunk, metadata in graph.stream({"messages": [{"role": "user", "content": query}]}, config=config,
+                                        stream_mode="messages"):
+        print(f"Chunk: {chunk}")
+        print(f"Metadata for that chunk: {metadata}")
         if chunk.content:
             if "langgraph_node" in metadata:
                 # print(f"New metadata: {metadata['langgraph_node']}")
                 if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
                     yield chunk.content
-

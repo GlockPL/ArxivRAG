@@ -2,10 +2,12 @@ import streamlit as st
 
 from rag_functions import create_graph, stream
 
+
 def streamlit_app():
-    graph = create_graph()
     st.title("Arxiv cs_AI RAG")
 
+    if "graph" not in st.session_state:
+        st.session_state.graph = create_graph()
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -19,7 +21,7 @@ def streamlit_app():
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            token = stream(graph, prompt)
+            token = stream(st.session_state.graph, prompt)
             response = st.write_stream(token)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
