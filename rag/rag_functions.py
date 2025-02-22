@@ -1,7 +1,7 @@
 from typing import List, Generator
 
 from langchain_core.documents import Document
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.checkpoint.memory import MemorySaver
@@ -44,7 +44,7 @@ def retrieve(query: str) -> tuple[str, List[Document]]:
         return serialized, retrieved_docs
 
 
-def query_or_respond(state: MessagesState):
+def query_or_respond(state: MessagesState) -> dict[str, list]:
     """Generate tool call for retrieval or respond."""
     print(state)
     llm_with_tools = llm.bind_tools([retrieve])
@@ -53,7 +53,7 @@ def query_or_respond(state: MessagesState):
     return {"messages": [response]}
 
 
-def generate(state: MessagesState):
+def generate(state: MessagesState) -> dict[str, list]:
     """Generate answer."""
     messages = state["messages"]
     recent_tool_messages = []
@@ -89,7 +89,7 @@ def generate(state: MessagesState):
     response = llm.invoke(prompt)
     return {"messages": [response]}
 
-def create_graph():
+def create_graph() -> CompiledStateGraph:
     graph_builder = StateGraph(MessagesState)
     graph_builder.add_node("query_or_respond", query_or_respond)
     graph_builder.add_node("tools", ToolNode([retrieve]))  # Use ToolNode
@@ -122,6 +122,5 @@ def stream(graph: CompiledStateGraph, query: str) -> Generator[str, None, None]:
         print(f"Metadata for that chunk: {metadata}")
         if chunk.content:
             if "langgraph_node" in metadata:
-                # print(f"New metadata: {metadata['langgraph_node']}")
                 if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
                     yield chunk.content
