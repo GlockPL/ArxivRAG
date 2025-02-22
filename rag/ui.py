@@ -1,10 +1,8 @@
 import streamlit as st
 
-# from rag_pipeline import RAG
 from rag_functions import create_graph, stream
 
 def streamlit_app():
-    # rag = RAG()
     graph = create_graph()
     st.title("Arxiv cs_AI RAG")
 

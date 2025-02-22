@@ -1,8 +1,9 @@
-from typing import Sequence, List, Generator
+from typing import List, Generator
 
 from langchain_core.documents import Document
-from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.graph import END
@@ -18,13 +19,9 @@ class RetrieveInput(BaseModel):  # Correct Pydantic Model
     query: str
 
 
-# Option 1: (Recommended) Use a stronger model.  Modify your get_llm()
-# function to return, for example, gemini-1.5-pro-001.
-# llm = get_llm() # Make sure this returns a strong model
+llm = get_llm() # Make sure this returns a strong model
 
-# Option 2: (If you MUST use Flash)  Keep Flash, but add prompting.
-llm = get_llm()  # Keep this if you're using Flash for testing.
-
+# llm = ChatOpenAI(model="gpt-4o")
 
 @tool(response_format="content_and_artifact", args_schema=RetrieveInput)
 def retrieve(query: str) -> tuple[str, List[Document]]:
@@ -50,33 +47,10 @@ def retrieve(query: str) -> tuple[str, List[Document]]:
 
 def query_or_respond(state: MessagesState):
     """Generate tool call for retrieval or respond."""
-    messages = state["messages"]
-    last_message = messages[-1]
-
-    # Check if the last message is from the user.
-    if isinstance(last_message, HumanMessage):
-        # Option 1: (Stronger Model) - Let the model decide.
-        # llm_with_tools = llm.bind_tools([retrieve])
-        # response = llm_with_tools.invoke(messages)
-        # return {"messages": [response]}
-
-        # Option 2: (Flash) - Force the tool call
-        llm_with_tools = llm.bind_tools([retrieve])
-        # Construct a prompt that *explicitly* asks for tool use.
-        forced_prompt = messages + [
-            AIMessage(
-                content="I need to retrieve information to answer. I will use the 'retrieve' tool."
-            )
-        ]
-
-        response = llm_with_tools.invoke(forced_prompt)  # type: ignore
-
-        return {"messages": [response]}
-
-    else:
-        # If not human message return last message
-        return {"messages": [last_message]}
-
+    llm_with_tools = llm.bind_tools([retrieve])
+    response = llm_with_tools.invoke(state["messages"])
+    # MessagesState appends messages to state instead of overwriting
+    return {"messages": [response]}
 
 def generate(state: MessagesState):
     """Generate answer."""
@@ -124,32 +98,26 @@ def create_graph():
     graph_builder.add_conditional_edges(
         "query_or_respond",
         tools_condition,
-        # Corrected condition mapping:  If tools are called, go to "tools".
-        # Otherwise, go directly to "generate".
         {
             "tools": "tools",
-            END: "generate"
+            END: END
         },
     )
     graph_builder.add_edge("tools", "generate")
     graph_builder.add_edge("generate", END)
 
     graph = graph_builder.compile()
-    # graph.get_graph().draw_mermaid_png(output_file_path="graph.png") # Optional
+    graph.get_graph().draw_mermaid_png(output_file_path="graph.png") # Optional
     return graph
 
 
 def stream(graph: CompiledStateGraph, query: str) -> Generator[str, None, None]:
     """Streams the final response tokens."""
     input_message = HumanMessage(content=query)
-    full_response = ""
-    for chunk in graph.stream({"messages": [input_message]}):
-        if "__end__" not in chunk:
-            if "generate" in chunk:
-                messages = chunk["generate"].get("messages")
-                if messages:
-                    last_message = messages[-1]
-                    if isinstance(last_message, AIMessage):
-                        if last_message.content:
-                            full_response += last_message.content  # type: ignore
-                            yield last_message.content  # type: ignore
+    for chunk, metadata in graph.stream({"messages": [input_message]}, stream_mode="messages"):
+        if chunk.content:
+            if "langgraph_node" in metadata:
+                # print(f"New metadata: {metadata['langgraph_node']}")
+                if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
+                    yield chunk.content
+
