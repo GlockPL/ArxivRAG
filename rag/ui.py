@@ -4,7 +4,7 @@ from rag_functions import create_graph, stream
 
 
 def streamlit_app():
-    st.title("Arxiv cs_AI RAG")
+    st.title("⚗️ ARXIV cs.AI RAG 🤖")
 
     if "graph" not in st.session_state:
         st.session_state.graph = create_graph()
@@ -15,7 +15,7 @@ def streamlit_app():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if prompt := st.chat_input("Ask here question about Arxiv article in cs_AI category?"):
+    if prompt := st.chat_input("Ask here question about Arxiv article in cs.AI category? 😎"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)

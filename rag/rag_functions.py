@@ -46,7 +46,6 @@ def retrieve(query: str) -> tuple[str, List[Document]]:
 
 def query_or_respond(state: MessagesState) -> dict[str, list]:
     """Generate tool call for retrieval or respond."""
-    print(state)
     llm_with_tools = llm.bind_tools([retrieve])
     response = llm_with_tools.invoke(state["messages"])
     # MessagesState appends messages to state instead of overwriting
@@ -85,7 +84,6 @@ def generate(state: MessagesState) -> dict[str, list]:
     ]
 
     prompt = [SystemMessage(content=system_message_content)] + conversation_messages
-    print(prompt)
     response = llm.invoke(prompt)
     return {"messages": [response]}
 
@@ -118,8 +116,6 @@ def stream(graph: CompiledStateGraph, query: str) -> Generator[str, None, None]:
     config = {"configurable": {"thread_id": "1"}}
     for chunk, metadata in graph.stream({"messages": [{"role": "user", "content": query}]}, config=config,
                                         stream_mode="messages"):
-        print(f"Chunk: {chunk}")
-        print(f"Metadata for that chunk: {metadata}")
         if chunk.content:
             if "langgraph_node" in metadata:
                 if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
