@@ -721,6 +721,20 @@ langchain-core = ">=0.2.38,<0.4"
 msgpack = ">=1.1.0,<2.0.0"
 
 [[package]]
+name = "langgraph-checkpoint-postgres"
+version = "2.0.15"
+description = "Library with a Postgres implementation of LangGraph checkpoint saver."
+category = "main"
+optional = false
+python-versions = "<4.0.0,>=3.9.0"
+
+[package.dependencies]
+langgraph-checkpoint = ">=2.0.15,<3.0.0"
+orjson = ">=3.10.1"
+psycopg = ">=3.2.0,<4.0.0"
+psycopg-pool = ">=3.2.0,<4.0.0"
+
+[[package]]
 name = "langgraph-sdk"
 version = "0.1.53"
 description = "SDK for interacting with LangGraph API"
@@ -985,6 +999,45 @@ description = ""
 category = "main"
 optional = false
 python-versions = ">=3.8"
+
+[[package]]
+name = "psycopg"
+version = "3.2.5"
+description = "PostgreSQL database adapter for Python"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[package.dependencies]
+typing-extensions = {version = ">=4.6", markers = "python_version < \"3.13\""}
+tzdata = {version = "*", markers = "sys_platform == \"win32\""}
+
+[package.extras]
+c = ["psycopg-c (==3.2.5)"]
+binary = ["psycopg-binary (==3.2.5)"]
+pool = ["psycopg-pool"]
+test = ["anyio (>=4.0)", "mypy (>=1.14)", "pproxy (>=2.7)", "pytest (>=6.2.5)", "pytest-cov (>=3.0)", "pytest-randomly (>=3.5)"]
+dev = ["ast-comments (>=1.1.2)", "black (>=24.1.0)", "codespell (>=2.2)", "dnspython (>=2.1)", "flake8 (>=4.0)", "isort[colors] (>=6.0)", "isort-psycopg", "mypy (>=1.14)", "pre-commit (>=4.0.1)", "types-setuptools (>=57.4)", "wheel (>=0.37)"]
+docs = ["Sphinx (>=5.0)", "furo (==2022.6.21)", "sphinx-autobuild (>=2021.3.14)", "sphinx-autodoc-typehints (>=1.12)"]
+
+[[package]]
+name = "psycopg-binary"
+version = "3.2.5"
+description = "PostgreSQL database adapter for Python -- C optimisation distribution"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[[package]]
+name = "psycopg-pool"
+version = "3.2.5"
+description = "Connection Pool for Psycopg"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[package.dependencies]
+typing-extensions = ">=4.6"
 
 [[package]]
 name = "py"
@@ -1536,7 +1589,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.11"
-content-hash = "c234209ed6da42f4be1676c9e633cfa1887efa04f5abb36baf9f1f2d2e77949a"
+content-hash = "fba31a3d9b636586827d87b2dd03c397edf54ed054d0248fee1b8cdcbcb2747a"
 
 [metadata.files]
 aiohappyeyeballs = []
@@ -1592,6 +1645,7 @@ langchain-text-splitters = []
 langchain-weaviate = []
 langgraph = []
 langgraph-checkpoint = []
+langgraph-checkpoint-postgres = []
 langgraph-sdk = []
 langsmith = []
 markdown-it-py = []
@@ -1611,6 +1665,9 @@ pluggy = []
 propcache = []
 proto-plus = []
 protobuf = []
+psycopg = []
+psycopg-binary = []
+psycopg-pool = []
 py = []
 pyarrow = []
 pyasn1 = []

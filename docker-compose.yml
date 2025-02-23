@@ -24,5 +24,24 @@ services:
       ENABLE_MODULES: 'text2vec-palm,generative-palm'
       CLUSTER_HOSTNAME: 'node1'
 
+  postgres:
+    image: postgres:17.4
+    restart: always
+    shm_size: 128mb
+    ports:
+      - 5432:5432
+    volumes:
+        - pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+
+  adminer:
+    image: adminer:4.8.1-standalone
+    restart: always
+    ports:
+      - 8880:8080
+
 volumes:
   weaviate_data:
+  pg_data:
