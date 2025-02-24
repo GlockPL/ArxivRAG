@@ -100,7 +100,7 @@ class PostgresDB:
                 SELECT thread_id, title FROM conversation_titles ORDER BY created_at DESC;
             """)
 
-            return {thread_id:title for thread_id, title in cursor.fetchall()}
+            return {thread_id: title for thread_id, title in cursor.fetchall()}
 
     def insert_conversation_title(self, thread_id: str, title: str) -> int:
         with self.connection.cursor() as cur:

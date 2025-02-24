@@ -10,6 +10,10 @@ def get_llm():
     llm = ChatGoogleGenerativeAI(model=settings.model, temperature=settings.temperature, max_retries=2)
     return llm
 
+def get_big_llm():
+    settings = Settings()
+    llm = ChatGoogleGenerativeAI(model=settings.model_big, temperature=settings.temperature, max_retries=2)
+    return llm
 
 def get_oai_llm():
     settings = Settings()
