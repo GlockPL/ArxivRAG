@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings
 
 load_dotenv()
 
+
 class Settings(BaseSettings):
     google_api_key: str = Field("", alias='GOOGLE_API_KEY')
     openai_api_key: str = Field("", alias='OPENAI_API_KEY')
@@ -16,3 +17,9 @@ class Settings(BaseSettings):
     json_dir: Path = Path('./rag/json_gemini/')
     temperature: float = Field(0.1)
     text_key: str = Field("page_content")
+    # Postgresql settings
+    host: str = Field("localhost")
+    database: str = Field("", alias='PG_USER')
+    user: str = Field("", alias='PG_USER')
+    password: str = Field("", alias='PG_PASS')
+    db_port: int = Field(5432)

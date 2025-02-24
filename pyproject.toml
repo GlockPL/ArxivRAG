@@ -15,6 +15,10 @@ streamlit = "^1.42.2"
 langgraph = "^0.2.74"
 langchain = "^0.3.19"
 langchain-openai = "^0.3.6"
+psycopg = "^3.2.5"
+psycopg-pool = "^3.2.5"
+langgraph-checkpoint-postgres = "^2.0.15"
+psycopg-binary = "^3.2.5"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
