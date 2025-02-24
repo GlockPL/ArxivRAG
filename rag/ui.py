@@ -12,10 +12,6 @@ def generate_thread_id() -> str:
 
 
 def streamlit_app():
-    if "new_chat" in st.query_params:
-        if "current_thread_id" in st.session_state:
-            del st.session_state.current_thread_id
-
     if "thread_id" in st.query_params:
         st.session_state.current_thread_id = st.query_params["thread_id"]
 
@@ -41,13 +37,12 @@ def streamlit_app():
     with st.sidebar:
         st.title("Chat History")
 
-        # # Add a "New Chat" button
-        # if st.button("New Chat", key="new_chat"):
-        #     new_thread_id = generate_thread_id()
-        #     st.session_state.current_thread_id = new_thread_id
-        #     st.rerun()
+        # Add a "New Chat" button
+        if st.button("New Chat", key="new_chat"):
+            del st.session_state.current_thread_id
+            st.switch_page("./ui.py")
 
-        st.markdown(f'<a href="?new_chat" target="_self" style="text-decoration:none">New Chat</a>', unsafe_allow_html=True)
+        # st.markdown(f'<a href="./" target="_self" style="text-decoration:none">New Chat</a>', unsafe_allow_html=True)
 
         # st.write(f"Current chat: {}")
         st.write("---")  # Divider

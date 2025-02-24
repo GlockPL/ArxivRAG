@@ -26,15 +26,17 @@ class GrapState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     title: str
 
-# llm = get_llm()
-llm = get_oai_llm()
+llm = get_llm()
+# llm = get_oai_llm()
 connection = None
 
 
 @tool(response_format="content_and_artifact", args_schema=RetrieveInput)
 def retrieve(query: str) -> tuple[str, List[Document]]:
     """
-    Query the vector store for documents
+    Query the vector store using embeddings that will retrieve sections from Arxiv cs.AI articles.
+    :param query: string with user query
+    :return: string with retrieved documents and list of documents with metadata retrieved from vector store
     """
     embeddings = get_embeddings()
     settings = Settings()
