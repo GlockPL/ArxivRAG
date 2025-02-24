@@ -30,8 +30,6 @@ class GrapState(TypedDict):
 
 
 @tool(response_format="content_and_artifact", args_schema=RetrieveInput)
-
-
 def retrieve(query: str) -> tuple[str, List[Document]]:
     """
     Query the vector store using embeddings that will retrieve sections from Arxiv cs.AI articles.
@@ -153,17 +151,19 @@ class RAG:
         graph_builder.add_edge("tools", "generate")
         graph_builder.add_edge("generate", END)
 
-        any_tables_in_db, tables = check_database_tables()
-        if not any_tables_in_db:
+        pg = PostgresDB()
+
+        if not pg.conversation_titles_exists():
             print("Setting up conversation titles table")
-            pg = PostgresDB()
             pg.create_conversation_title_table()
-            pg.close()
 
         checkpointer = PostgresSaver(self.connection)
-        if not any_tables_in_db:
+
+        if not pg.checkpoint_exists():
             print("Setting up checkpointer database")
             checkpointer.setup()
+
+        pg.close()
 
         graph = graph_builder.compile(checkpointer=checkpointer)
         # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional

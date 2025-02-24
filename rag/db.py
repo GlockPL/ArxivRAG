@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import bcrypt
 import weaviate
 import logging
 
@@ -93,6 +94,34 @@ class PostgresDB:
             """)
         self.connection.commit()
 
+    def init_db(self):
+        with self.connection.cursor() as cursor:
+            cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS users (
+                                id SERIAL PRIMARY KEY,
+                                username VARCHAR(50) UNIQUE NOT NULL,
+                                name VARCHAR(100) NOT NULL,
+                                email VARCHAR(100) UNIQUE NOT NULL,
+                                password VARCHAR(200) NOT NULL,
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            )
+                        ''')
+
+            # Create login_history table for tracking user logins
+            cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS login_history (
+                                id SERIAL PRIMARY KEY,
+                                user_id INTEGER REFERENCES users(id),
+                                login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                logout_time TIMESTAMP,
+                                ip_address VARCHAR(50),
+                                user_agent TEXT
+                            )
+                        ''')
+
+            self.connection.commit()
+
+
     def list_titles(self):
         with self.connection.cursor() as cursor:
             # Query to get all tables in the public schema
@@ -142,6 +171,103 @@ class PostgresDB:
 
     def conversation_titles_exists(self):
         return self.table_exists("conversation_titles")
+
+    def checkpoint_exists(self):
+        return self.table_exists("checkpoints")
+
+    def users_exists(self):
+        return self.table_exists("users")
+
+    def get_users_from_db(self):
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT username, name, email, password FROM users")
+            db_users = cursor.fetchall()
+
+            # Format for streamlit-authenticator
+            credentials = {
+                "usernames": {}
+            }
+
+            for user in db_users:
+                username, name, email, password = user
+                credentials["usernames"][username] = {
+                    "name": name,
+                    "email": email,
+                    "password": password
+                }
+
+            return credentials
+
+    # Function to add a new user to the database
+    def add_user(self, username, name, email, password):
+        """Add a new user to the database with hashed password"""
+        with self.connection.cursor() as cursor:
+            # Check if username or email already exists
+            cursor.execute("SELECT * FROM users WHERE username = %s OR email = %s", (username, email))
+            if cursor.fetchone():
+                return False, "Username or email already exists"
+
+            # Hash the password using bcrypt
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+            # Insert the new user
+            cursor.execute(
+                "INSERT INTO users (username, name, email, password) VALUES (%s, %s, %s, %s)",
+                (username, name, email, hashed_password)
+            )
+            self.connection.commit()
+        return True, "Registration complete"
+
+    # Function to log user login activity
+    def log_user_login(self, username, ip_address="", user_agent=""):
+        """Record user login in the login_history table"""
+        with self.connection.cursor() as cursor:
+            # Get user ID from username
+            cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+            user_result = cursor.fetchone()
+
+            if user_result:
+                user_id = user_result[0]
+
+                # Insert login record
+                cursor.execute(
+                    "INSERT INTO login_history (user_id, ip_address, user_agent) VALUES (%s, %s, %s)",
+                    (user_id, ip_address, user_agent)
+                )
+                self.connection.commit()
+                cursor.close()
+                return True
+        return False
+
+    # Function to update user logout time
+    def log_user_logout(self, username):
+        """Update the logout time for the most recent login session"""
+        with self.connection.cursor() as cursor:
+                # Get user ID from username
+                cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+                user_result = cursor.fetchone()
+
+                if user_result:
+                    user_id = user_result[0]
+
+                    # Update most recent login record with logout time
+                    cursor.execute(
+                        """
+                        UPDATE login_history 
+                        SET logout_time = CURRENT_TIMESTAMP 
+                        WHERE user_id = %s 
+                        AND id = (
+                            SELECT id FROM login_history 
+                            WHERE user_id = %s 
+                            ORDER BY login_time DESC 
+                            LIMIT 1
+                        )
+                        """,
+                        (user_id, user_id)
+                    )
+                    self.connection.commit()
+                    return True
+        return False
 
     def close(self):
         self.connection.close()

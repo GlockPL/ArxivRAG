@@ -23,3 +23,10 @@ class Settings(BaseSettings):
     user: str = Field("", alias='PG_USER')
     password: str = Field("", alias='PG_PASS')
     db_port: int = Field(5432)
+
+
+class LoginSettings(BaseSettings):
+    cookie_name: str = Field("", alias='COOKIE_NAME')
+    auth_key: str = Field("", alias='AUTH_KEY')
+    cookie_key: str = Field("", alias='COOKIE_KEY')
+    cookie_expiry_days: int = Field(3, alias='COOKIE_EXPIRY_DAYS')

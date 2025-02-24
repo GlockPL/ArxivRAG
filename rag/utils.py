@@ -63,31 +63,3 @@ def check_database_tables():
     finally:
         if connection:
             connection.close()
-
-
-class PostgresLifeCycleManager:
-    def __init__(self, db_uri: str):
-        """
-        Initialize the database manager
-
-        Args:
-            db_uri (str): Database connection string
-        """
-        self.db_uri = db_uri
-        self.connection = None
-        self._connect()
-
-    def _connect(self):
-        """Establish database connection"""
-        self.connection = Connection.connect(self.db_uri, autocommit=True)
-
-
-    def close(self):
-        """Explicitly close the connection"""
-        if self.connection and not self.connection.closed:
-            self.connection.close()
-            self.connection = None
-
-    def __del__(self):
-        """Destructor to ensure connection is closed"""
-        self.close()
