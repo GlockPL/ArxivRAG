@@ -2,16 +2,45 @@ from datetime import datetime
 import random
 import streamlit as st
 
-from rag_pipeline import RAG
-from db import PostgresDB
+from rag.rag_pipeline import RAG
+from rag.db.db import PostgresDB
+from rag.login import validate_token, get_token_from_cookie, remove_token
 
 
 def generate_thread_id() -> str:
     new_thread_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"id_{new_thread_id}_{random.randint(0, 100000)}"
 
+def check_access():
+    if "access_token" not in st.session_state:
+        token = get_token_from_cookie()
+        if token:
+            if validate_token(token):
+                st.session_state.access_token = token
+            else:
+                print("Access denied: Invalid token in cookie")
+                st.session_state.access_token = None
+                remove_token()
+                st.switch_page("login.py")
+        else:
+            print("Access denied: token not in cookies")
+            st.session_state.access_token = None
+            st.switch_page("login.py")
+
+def check_session_access():
+    if st.session_state.access_token:
+        token = st.session_state.access_token
+        if not validate_token(token):
+            print("Access denied: invalid token is session")
+            st.session_state.access_token = None
+            remove_token()
+            st.switch_page("login.py")
 
 def streamlit_app():
+
+    check_access()
+    check_session_access()
+
     if "thread_id" in st.query_params:
         st.session_state.current_thread_id = st.query_params["thread_id"]
 
@@ -35,9 +64,8 @@ def streamlit_app():
             st.markdown(f"## ⚗️ {thread_history[st.session_state.current_thread_id]}")
 
     with st.sidebar:
+        st.markdown(f'<a href="./login?logout=true" target="_self" style="text-decoration:none">Logout</a>', unsafe_allow_html=True)
         st.title("Chat History")
-
-        # Add a "New Chat" button
         if st.button("New Chat", key="new_chat"):
             del st.session_state.current_thread_id
             st.switch_page("pages/ui.py")
@@ -50,7 +78,7 @@ def streamlit_app():
 
         # Display each thread as a clickable link
         for thread_id, thread_title in thread_history.items():
-            st.markdown(f'<a href="?thread_id={thread_id}" target="_self" style="text-decoration:none">{thread_title}</a>',
+            st.markdown(f'<a href="ui?thread_id={thread_id}" target="_self" style="text-decoration:none">{thread_title}</a>',
                         unsafe_allow_html=True)
 
     config = {"configurable": {"thread_id": st.session_state.current_thread_id}}

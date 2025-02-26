@@ -1,92 +1,114 @@
+import requests
 import streamlit as st
-import streamlit_authenticator as stauth
 import extra_streamlit_components as stx
 
-from db import PostgresDB
-from settings import LoginSettings
+from rag.settings import LoginSettings, HostSettings
+
+# Initialize cookie manager
+login_settings = LoginSettings()
+host_settings = HostSettings()
+
+def get_cookie_manager():
+    """Get or create a cookie manager singleton"""
+    if "cookie_manager" not in st.session_state:
+        st.session_state.cookie_manager = stx.CookieManager(key=login_settings.cookie_key)
+    return st.session_state.cookie_manager
 
 
-def initialize_session_state():
-    """Initialize session state variables if they don't exist"""
-    if 'authentication_status' not in st.session_state:
-        st.session_state['authentication_status'] = None
-    if 'name' not in st.session_state:
-        st.session_state['name'] = None
-    if 'username' not in st.session_state:
-        st.session_state['username'] = None
-    if 'logout' not in st.session_state:
-        st.session_state['logout'] = None
+def get_token_from_cookie():
+    """Retrieve token from cookie if it exists"""
+    cookie_manager = get_cookie_manager()
+    print(cookie_manager.get_all())
+    return cookie_manager.get(cookie="access_token")
 
-    # Capture client info
-    if 'client_ip' not in st.session_state:
-        st.session_state['client_ip'] = 'Unknown'
-    if 'client_user_agent' not in st.session_state:
-        st.session_state['client_user_agent'] = 'Unknown'
-
-    # Initialize authenticator only once
-    if 'authenticator' not in st.session_state:
-        pg = PostgresDB()
-        if not pg.users_exists():
-            pg.init_db()
-        # Get users for authentication
-        credentials = pg.get_users_from_db()
-        pg.close()
-
-        login_settings = LoginSettings()
-        st.session_state['authenticator'] = stauth.Authenticate(
-            credentials=credentials,
-            cookie_name=login_settings.cookie_name,
-            key=login_settings.auth_key,  # Add prefix to make key unique
-            cookie_expiry_days=login_settings.cookie_expiry_days,
+def validate_token(token):
+    """Check if token is valid by calling the API endpoint"""
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.post(
+            f"{host_settings.http_type}://{host_settings.host}:{host_settings.port}/validate-token",
+            headers=headers
         )
+        print(f"Token response: {response.json()}")
+        return response.status_code == 200
+    except:
+        print("Token validation failed")
+        return False
 
+def login_user(username, password):
+    """Get token from FastAPI endpoint"""
+    response = requests.post(
+        f"{host_settings.http_type}://{host_settings.host}:{host_settings.port}/token",
+        data={"username": username, "password": password}
+    )
+
+    if response.status_code == 200:
+        token_data = response.json()
+        st.session_state.access_token = token_data["access_token"]
+        # Store token in cookie for persistence across refreshes
+        cookie_manager = get_cookie_manager()
+        cookie_manager.set("access_token", token_data["access_token"])
+        print("All cookies during login:")
+        # print(cookie_manager.get("access_token"))
+        return True
+    return False
+
+
+def register_user(username, name, email, password):
+    """Register a new user via FastAPI endpoint"""
+    response = requests.post(
+        f"{host_settings.http_type}://{host_settings.host}:{host_settings.port}/register",
+        json={"username": username, "name": name, "email": email, "password": password}
+    )
+
+    if response.status_code == 200:
+        return True, "Registration successful!"
+    else:
+        error_msg = "Registration failed"
+        if response.status_code == 400:
+            try:
+                error_msg = response.json().get("detail", error_msg)
+            except:
+                return False, "Error Parsing Response"
+        return False, error_msg
+
+def remove_token():
+    cookie_manager = get_cookie_manager()
+    cookie_manager.delete("access_token")
 
 def login_page():
     """Render the login page"""
     st.title("Login to the Application")
 
-    pg = PostgresDB()
+    if st.query_params.get("logout"):
+        print("Logout!")
+        logout()
 
-    # Use the authenticator from session state instead of creating a new one
-    authenticator = st.session_state['authenticator']
-
-    login_settings = LoginSettings()
-    # Create a cookie manager with a unique key
-    cookie_manager = stx.CookieManager(key=login_settings.cookie_key)
-
+    # Check for token in cookie
+    if st.session_state.access_token is None:
+        token = get_token_from_cookie()
+        if token and validate_token(token):
+            st.session_state.access_token = token
+            st.switch_page("pages/ui.py")
 
     # Create tabs for login and registration
     tab1, tab2 = st.tabs(["Login", "Register"])
 
-
     with tab1:
-        authenticator.login("main", "Login")
 
-        if st.session_state['authentication_status']:
-            # Log user login
-            name = st.session_state['name']
-            username = st.session_state['username']
-            ip_address = st.session_state.get('client_ip', 'Unknown')
-            user_agent = st.session_state.get('client_user_agent', 'Unknown')
-            pg.log_user_login(username, ip_address, user_agent)
+        if st.session_state.access_token is None:
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submit = st.form_submit_button("Login")
 
-            st.success(f"Welcome {name}! You are now logged in.")
-            st.info("You'll be redirected to the main application.")
-
-            # Create a cookie to persist the login across multiple pages
-            cookie_manager.set("auth_status", "authenticated", key="set_auth_status_cookie")
-            cookie_manager.set("username", username, key="set_username_cookie")
-            cookie_manager.set("name", name, key="set_name_cookie")
-
-            # Redirect button to main app
-            if st.button("Go to Dashboard"):
-                st.switch_page("pages/ui.py")  # This will navigate to app.py
-
-        elif st.session_state['authentication_status'] is False:
-            st.error("Username/password is incorrect")
-
-        elif st.session_state['authentication_status'] is None:
-            st.info("Please enter your username and password")
+                if submit:
+                    if login_user(username, password):
+                        st.switch_page("pages/ui.py")
+                    else:
+                        st.error("Invalid username or password")
+        else:
+            st.switch_page("pages/ui.py")
 
     with tab2:
         with st.form("registration_form"):
@@ -105,52 +127,22 @@ def login_page():
                 elif new_password != confirm_password:
                     st.error("Passwords do not match")
                 else:
-                    success, message = pg.add_user(new_username, new_name, new_email, new_password)
+                    success, message = register_user(new_username, new_name, new_email, new_password)
                     if success:
                         st.success(message)
                         st.info("Please switch to the Login tab to login with your new credentials")
                     else:
                         st.error(message)
-    pg.close()
-
-
-def check_authentication():
-    """Check if user is authenticated using cookies"""
-    cookie_manager = stx.CookieManager(key="check_auth_cookie_manager")
-    auth_status = cookie_manager.get("auth_status")
-
-    if auth_status == "authenticated":
-        username = cookie_manager.get("username")
-        name = cookie_manager.get("name")
-
-        # Restore session state from cookies
-        st.session_state['authentication_status'] = True
-        st.session_state['username'] = username
-        st.session_state['name'] = name
-
-        return True
-
-    return False
 
 
 def logout():
     """Log out the user by clearing session state and cookies"""
-    if st.session_state.get('username'):
-        pg = PostgresDB()
-        pg.log_user_logout(st.session_state['username'])
-        pg.close()
-
     # Clear session state
-    st.session_state['authentication_status'] = None
-    st.session_state['name'] = None
-    st.session_state['username'] = None
-
-    # Clear cookies
-    cookie_manager = stx.CookieManager(key="logout_cookie_manager")
-    cookie_manager.delete("auth_status")
-    cookie_manager.delete("username")
-    cookie_manager.delete("name")
-
+    st.session_state['access_token'] = None
+    cookie_manager = get_cookie_manager()
+    cookie_manager.delete("access_token")
+    print("Token after logout:")
+    print(cookie_manager.get("access_token"))
     # Redirect to login page
     st.switch_page("login.py")
 
@@ -158,5 +150,7 @@ def logout():
 # When this file is run directly, display the login page
 if __name__ == "__main__":
     st.set_page_config(page_title="Login", page_icon="🔒")
-    initialize_session_state()
+    # Set up session state
+    if "access_token" not in st.session_state:
+        st.session_state.access_token = None
     login_page()

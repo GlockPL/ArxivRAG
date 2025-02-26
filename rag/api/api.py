@@ -7,7 +7,6 @@ from typing import List, Optional, Dict
 from datetime import datetime, timedelta, UTC
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from uuid import uuid4
 import asyncio
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
@@ -193,7 +192,6 @@ def get_messages(thread_id: str):
         conversation = state_history[0][0]['messages']
 
     for message in conversation:
-        msg_type = ""
         if isinstance(message, HumanMessage):
             msg_type = "human"
         elif isinstance(message, AIMessage):
@@ -268,6 +266,51 @@ async def login_for_access_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@app.post("/validate-token")
+async def validate_token(token: str = Depends(oauth2_scheme)):
+    """
+    Validates if a token is valid and not expired.
+    This endpoint accepts the token via the Authorization header.
+    Returns the username if valid, otherwise throws an authentication error.
+    """
+    try:
+        payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verify the user exists
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.username == username).first()
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            # Return basic user info
+            return {
+                "valid": True,
+                "username": username,
+                "user_id": user.id
+            }
+        finally:
+            db.close()
+
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired or invalid",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 @app.get("/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
@@ -292,6 +335,28 @@ async def list_conversations(
 
     return convos
 
+@app.get("/conversations/{thread_id}", response_model=ConversationResponse)
+async def get_conversation(
+        thread_id: str,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    # Check if conversation exists and user has access
+    convo = get_conversation(db, thread_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # In a real app with multiple participants, check if user is a participant
+    if convo.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+
+    conversation = ConversationResponse(
+        thread_id=convo.thread_id,
+        title=convo.title,
+        created_at=convo.created_at,
+        user_id=current_user.id,
+    )
+    return conversation
 
 @app.get("/conversations/{thread_id}/messages", response_model=List[MessageResponse])
 async def get_conversation_messages(
