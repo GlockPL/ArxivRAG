@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     json_dir: Path = Path('./rag/json_gemini/')
     temperature: float = Field(0.1)
     text_key: str = Field("page_content")
+
+
+class DBSettings(BaseSettings):
     # Postgresql settings
     host: str = Field("localhost")
     database: str = Field("", alias='PG_USER')
@@ -30,3 +33,9 @@ class LoginSettings(BaseSettings):
     auth_key: str = Field("", alias='AUTH_KEY')
     cookie_key: str = Field("", alias='COOKIE_KEY')
     cookie_expiry_days: int = Field(3, alias='COOKIE_EXPIRY_DAYS')
+
+
+class TokenSettings(BaseSettings):
+    secret_key: str = Field("", alias='JWT_SECRET')
+    algorithm: str = Field("HS256", alias='ALGORITHM')
+    token_expires_minutes: int = Field(30, alias='ACCESS_TOKEN_EXPIRE_MINUTES')

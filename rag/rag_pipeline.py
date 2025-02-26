@@ -15,9 +15,9 @@ from psycopg import Connection
 from pydantic import BaseModel
 from typing_extensions import TypedDict, List, Annotated
 
-from db import WeaviateDB, PostgresDB
-from settings import Settings
-from utils import get_llm, get_big_llm, get_embeddings, check_database_tables
+from rag.db.db import WeaviateDB, PostgresDB
+from rag.settings import Settings, DBSettings
+from rag.utils import get_llm, get_big_llm, get_embeddings
 
 
 class RetrieveInput(BaseModel):
@@ -62,9 +62,9 @@ class RAG:
         {context}
         """
         self.rag_prompt = PromptTemplate.from_template(self.template)
-        self.settings = Settings()
-        self.llm = get_big_llm()
-        db_uri = f"postgresql://{self.settings.user}:{self.settings.password}@{self.settings.host}:{self.settings.db_port}/{self.settings.user}?sslmode=disable"
+        self.db_settings = DBSettings()
+        self.llm = get_llm()
+        db_uri = f"postgresql://{self.db_settings.user}:{self.db_settings.password}@{self.db_settings.host}:{self.db_settings.db_port}/{self.db_settings.user}?sslmode=disable"
         self.connection = Connection.connect(db_uri, autocommit=True)
         self.graph = self.create_graph()
 
@@ -116,7 +116,7 @@ class RAG:
             user_query = messages[0].content  # Assumes first message is the user query
             prompt = [
                 SystemMessage(
-                    content="Create a short, concise title for this conversation.  The title should be no more than 5 words.  Here is the user's first question:"),
+                    content="Create a short, single concise title for this conversation. The title should be no more than 5 words. Return just the title. Here is the user's first question:"),
                 HumanMessage(content=user_query)
             ]
             response = self.llm.invoke(prompt)

@@ -80,7 +80,7 @@ def login_page():
 
             # Redirect button to main app
             if st.button("Go to Dashboard"):
-                st.switch_page("ui.py")  # This will navigate to app.py
+                st.switch_page("pages/ui.py")  # This will navigate to app.py
 
         elif st.session_state['authentication_status'] is False:
             st.error("Username/password is incorrect")

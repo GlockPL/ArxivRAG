@@ -40,7 +40,7 @@ def streamlit_app():
         # Add a "New Chat" button
         if st.button("New Chat", key="new_chat"):
             del st.session_state.current_thread_id
-            st.switch_page("./ui.py")
+            st.switch_page("pages/ui.py")
 
         # st.markdown(f'<a href="./" target="_self" style="text-decoration:none">New Chat</a>', unsafe_allow_html=True)
 

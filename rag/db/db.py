@@ -8,7 +8,7 @@ from psycopg import Connection
 from weaviate.collections.classes.config import Configure
 import weaviate.classes as wvc
 
-from settings import Settings
+from rag.settings import Settings, DBSettings
 
 
 class WeaviateDB:
@@ -56,7 +56,7 @@ class WeaviateDB:
 
 class PostgresDB:
     def __init__(self):
-        self.settings = Settings()
+        self.settings = DBSettings()
         self.connection = self._connect()
 
     def _connect(self):
