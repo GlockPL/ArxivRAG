@@ -1,6 +1,8 @@
 import logging
 
 import json
+from typing import Any, Generator
+
 from natsort import natsorted
 from tqdm import tqdm
 
@@ -10,9 +12,9 @@ from langchain_core.documents import Document
 from langchain_weaviate.vectorstores import WeaviateVectorStore
 from weaviate.collections.classes.filters import Filter
 
-from settings import Settings
-from db import WeaviateDB
-from utils import get_llm
+from rag.settings import Settings
+from rag.db.db import WeaviateDB
+from rag.utils import get_llm
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -49,14 +51,14 @@ class ContextualIndexing:
         with WeaviateDB() as wdb:
             return wdb.collections.exists(self.settings.collection)
 
-    def create_documents(self) -> list:
+    def create_documents(self) -> Generator[list[Document], Any, None]:
         json_path = self.settings.json_dir
 
         documents = []
         file_list = natsorted(json_path.glob("*.json"), reverse=True)
         i = 0
 
-        for json_file in tqdm(file_list):
+        for json_file in (pbr:=tqdm(file_list)):
             if i == 0:
                 documents = []
 
@@ -65,6 +67,8 @@ class ContextualIndexing:
 
             with json_file.open('r') as jf:
                 json_article = json.load(jf)
+
+            pbr.set_postfix_str(f"File: {json_file.stem}")
 
             if 'title' not in json_article:
                 continue
