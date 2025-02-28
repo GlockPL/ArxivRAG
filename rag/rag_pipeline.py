@@ -178,6 +178,8 @@ class RAG:
                 if "langgraph_node" in metadata:
                     if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
                         yield chunk.content
+                    # else:
+                    #     yield "Thinking"
 
     def get_state_history(self, config: RunnableConfig) -> Iterator[StateSnapshot]:
         return self.graph.get_state_history(config)

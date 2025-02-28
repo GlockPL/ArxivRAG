@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import Field
@@ -14,9 +15,10 @@ class Settings(BaseSettings):
     model_oai: str = Field("gpt-4o")
     embedder: str = Field("text-embedding-004")
     collection: str = Field("Arxiv")
-    json_dir: Path = Path('./rag/json_gemini/')
+    json_dir: Path = Path('./json_gemini/')
     temperature: float = Field(0.1)
     text_key: str = Field("page_content")
+    logging_level: int = Field(logging.DEBUG)
 
 
 class DBSettings(BaseSettings):

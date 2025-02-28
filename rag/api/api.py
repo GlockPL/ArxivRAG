@@ -1,16 +1,17 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, AsyncGenerator
 from datetime import datetime, timedelta, UTC
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import asyncio
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker
 
 from rag.settings import DBSettings, TokenSettings
@@ -94,6 +95,7 @@ class MessageResponse(BaseModel):
     type: str
     thread_id: str
 
+
 class ConversationCreate(BaseModel):
     title: str
     participants: List[str]  # List of usernames
@@ -175,10 +177,11 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
 # ----- Chat Functions -----
 
 def get_user_conversations(db: Session, user_id: int):
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).all()
+    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
+        desc(ConversationTitle.created_at)).all()
 
 
-def get_conversation(db: Session, thread_id: str):
+def get_one_conversation(db: Session, thread_id: str):
     return db.query(ConversationTitle).filter(ConversationTitle.thread_id == thread_id).first()
 
 
@@ -335,6 +338,7 @@ async def list_conversations(
 
     return convos
 
+
 @app.get("/conversations/{thread_id}", response_model=ConversationResponse)
 async def get_conversation(
         thread_id: str,
@@ -342,7 +346,7 @@ async def get_conversation(
         db: Session = Depends(get_db)
 ):
     # Check if conversation exists and user has access
-    convo = get_conversation(db, thread_id)
+    convo = get_one_conversation(db, thread_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -358,6 +362,7 @@ async def get_conversation(
     )
     return conversation
 
+
 @app.get("/conversations/{thread_id}/messages", response_model=List[MessageResponse])
 async def get_conversation_messages(
         thread_id: str,
@@ -365,11 +370,10 @@ async def get_conversation_messages(
         db: Session = Depends(get_db)
 ):
     # Check if conversation exists and user has access
-    convo = get_conversation(db, thread_id)
+    convo = get_one_conversation(db, thread_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # In a real app with multiple participants, check if user is a participant
     if convo.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
@@ -386,35 +390,27 @@ async def stream_messages(
         db: Session = Depends(get_db)
 ):
     # Check if conversation exists and user has access
-    convo = get_conversation(db, thread_id)
+    convo = get_one_conversation(db, thread_id)
     if convo:
         if convo.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
-    async def event_generator():
+    async def stream_generator() -> AsyncGenerator[str, None]:
         try:
             # Use the RAG streaming function
             for token in rag.stream(query=query, thread_id=thread_id):
-                # Format the token as an SSE event
-                yield {
-                    "event": "token",
-                    "data": token
-                }
-
-            # Optionally send a completion event
-            yield {
-                "event": "complete",
-                "data": ""
-            }
+                # Just yield the token directly
+                yield token
 
         except Exception as e:
             print(f"Error in streaming: {str(e)}")
-            yield {
-                "event": "error",
-                "data": str(e)
-            }
+            yield f"ERROR: {str(e)}"
 
-    return EventSourceResponse(event_generator())
+    # Return a StreamingResponse with plain text content type
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/plain"
+    )
 
 
 @app.put("/conversations/{thread_id}", response_model=ConversationResponse)
@@ -425,7 +421,7 @@ async def update_conversation_title(
         db: Session = Depends(get_db)
 ):
     # Check if conversation exists and user has access
-    convo = get_conversation(db, thread_id)
+    convo = get_one_conversation(db, thread_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 

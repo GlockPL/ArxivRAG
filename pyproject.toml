@@ -27,6 +27,8 @@ passlib = "^1.7.4"
 python-multipart = "^0.0.20"
 sse-starlette = "^2.2.1"
 psycopg2-binary = "^2.9.10"
+streamlit-cookies-controller = "^0.0.4"
+sseclient = "^0.0.27"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
