@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vue Chat App</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <title>ARXiV RAG</title>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.0/marked.min.js"></script>
@@ -11,100 +12,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" rel="stylesheet">
   <link rel="stylesheet" type="text/css" href="style.css"  />
-  <style>
-    /* Additional styles for conversation menu */
-    .chat-item {
-      position: relative;
-      overflow: visible;
-    }
-
-    .chat-list {
-      overflow: visible;
-    }
-
-    .chat-menu-button {
-      position: absolute;
-      right: 10px;
-      top: 10px;
-      background: none;
-      border: none;
-      color: #888;
-      cursor: pointer;
-      padding: 5px;
-      font-size: 14px;
-      visibility: hidden;
-    }
-
-    .chat-item:hover .chat-menu-button {
-      visibility: visible;
-    }
-
-    .chat-menu {
-      position: absolute;
-      right: 10px;
-      top: 30px;
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-      z-index: 100;
-      min-width: 150px;
-      color: #444;
-      overflow: visible;
-    }
-
-    .chat-menu-item {
-      padding: 10px 12px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      transition: background-color 0.2s;
-      color: #444;
-    }
-
-    .chat-menu-item:hover {
-      background-color: #f5f5f5;
-    }
-
-    .chat-menu-item i {
-      margin-right: 8px;
-      font-size: 14px;
-      width: 16px;
-    }
-
-    .edit-title-input {
-      width: 100%;
-      padding: 5px;
-      margin: 5px 0;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-
-    .edit-title-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 5px;
-      margin-top: 5px;
-    }
-
-    .edit-title-actions button {
-      padding: 3px 8px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-
-    .save-btn {
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-    }
-
-    .cancel-btn {
-      background-color: #f5f5f5;
-      border: 1px solid #ddd;
-    }
-  </style>
 </head>
 <body>
   <div id="app">
@@ -246,7 +153,7 @@
               <div class="message-avatar">
                 {{ message.type === 'human' ? userInitial : 'AI' }}
               </div>
-              <div class="message-content markdown-content" v-html="renderMarkdown(message.content)"></div>
+              <div class="message-content markdown-content" v-html="message.isStreaming ? message.content : renderMarkdown(message.content)"></div>
             </div>
           </div>
           <div class="chat-input">
@@ -558,14 +465,24 @@
           const messageText = newMessage.value;
           newMessage.value = ""; // Clear input right away for better UX
 
-          // Add message optimistically
-          const tempMessage = {
+          // Add user message to the chat
+          const userMessage = {
             content: messageText,
             type: 'human',
             thread_id: activeChat.value.id
           };
 
-          activeChat.value.messages.push(tempMessage);
+          activeChat.value.messages.push(userMessage);
+
+          // Create an empty AI message that will be updated with streaming content
+          const aiMessage = {
+            content: "<div class='thinking'><div class='dot-spinner'></div><span>Thinking...</span></div>",
+            type: 'ai',
+            thread_id: activeChat.value.id,
+            isStreaming: true
+          };
+
+          activeChat.value.messages.push(aiMessage);
 
           // Focus back on input and scroll to bottom
           nextTick(() => {
@@ -574,18 +491,60 @@
           });
 
           if (!activeChat.value.id.startsWith('temp-')) {
-            // Send message to API
+            // Send message to API using streaming endpoint
             isSending.value = true;
             try {
-              await axios.post(`${apiBaseUrl}/conversations/${activeChat.value.id}/messages`, {
-                content: messageText
+              // Encode the query parameter
+              const encodedQuery = encodeURIComponent(messageText);
+              const streamUrl = `${apiBaseUrl}/conversations/${activeChat.value.id}/stream?query=${encodedQuery}`;
+
+              // Fetch stream response
+              const response = await fetch(streamUrl, {
+                method: 'GET',
+                headers: {
+                  'Authorization': `Bearer ${authToken.value}`
+                }
               });
 
-              // Fetch the updated messages which should include the AI response
-              await fetchMessages(activeChat.value.id);
+              if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+              }
+
+              const reader = response.body.getReader();
+              const decoder = new TextDecoder();
+
+              // Process the stream
+              let isFirstChunk = true;
+              while (true) {
+                const { done, value } = await reader.read();
+
+                if (done) {
+                  break;
+                }
+
+                // Decode the chunk and add it to the AI message
+                const chunk = decoder.decode(value, { stream: true });
+
+                if (isFirstChunk) {
+                  // Replace the thinking indicator with the actual content on first chunk
+                  aiMessage.content = chunk;
+                  aiMessage.isStreaming = false;
+                  isFirstChunk = false;
+                  scrollToBottom();
+                } else {
+                  aiMessage.content += chunk;
+                }
+              }
+
             } catch (error) {
-              console.error('Error sending message:', error);
-              // Optionally show an error notification to user
+              console.error('Error streaming message:', error);
+              // Add error message if streaming fails
+              if (aiMessage.isStreaming) {
+                aiMessage.content = "Error: Failed to load response. Please try again.";
+                aiMessage.isStreaming = false;
+              } else {
+                aiMessage.content += "\n\nError: Failed to load response. Please try again.";
+              }
             } finally {
               isSending.value = false;
               scrollToBottom();
