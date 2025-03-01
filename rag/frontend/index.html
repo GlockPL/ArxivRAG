@@ -10,8 +10,37 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.0/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
+
+  <!-- Configure MathJax before loading it -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        ignoreHtmlClass: 'tex2jax_ignore',
+        processHtmlClass: 'tex2jax_process'
+      },
+      startup: {
+        pageReady: function() {
+          return new Promise(function (resolve) {
+            resolve();
+            console.log("MathJax page ready");
+            window.isMathJaxReady = true;
+          });
+        }
+      }
+    };
+  </script>
+  <!-- Add MathJax for LaTeX support with a callback when loaded -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js" async></script>
+
   <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" rel="stylesheet">
-  <link rel="stylesheet" type="text/css" href="style.css"  />
+  <link rel="stylesheet" type="text/css" href="style.css" />
 </head>
 <body>
   <div id="app">
@@ -161,7 +190,7 @@
               <textarea
                 class="message-input"
                 v-model="newMessage"
-                placeholder="Type a message (supports markdown)..."
+                placeholder="Type a message (supports markdown and LaTeX using $...$)..."
                 @keydown.enter.prevent="sendMessage"
                 ref="messageInput"
               ></textarea>
@@ -169,6 +198,11 @@
                 <i v-if="!isSending" class="fas fa-paper-plane"></i>
                 <div v-else class="loading-spinner" style="width: 16px; height: 16px;"></div>
               </button>
+            </div>
+            <!-- LaTeX Help Tooltip -->
+            <div class="latex-help">
+              <i class="fas fa-question-circle"></i>
+              <span>Use $...$ for inline math and $$...$$ for display equations</span>
             </div>
           </div>
         </template>
@@ -312,6 +346,53 @@
 
         const chats = ref([]);
 
+        // A reliable function to check if MathJax is ready
+        const waitForMathJax = () => {
+          return new Promise((resolve) => {
+            // If MathJax is already ready, resolve immediately
+            if (window.isMathJaxReady && window.MathJax && window.MathJax.typesetPromise) {
+              return resolve();
+            }
+
+            // Set up a counter to avoid infinite loops
+            let attempts = 0;
+            const maxAttempts = 30; // Try for 15 seconds (30 * 500ms)
+
+            const checkMathJax = () => {
+              attempts++;
+
+              // If MathJax is ready or we've reached max attempts, resolve
+              if ((window.MathJax && window.MathJax.typesetPromise) || attempts >= maxAttempts) {
+                window.isMathJaxReady = true;
+                return resolve();
+              }
+
+              // Otherwise, check again after a delay
+              setTimeout(checkMathJax, 500);
+            };
+
+            // Start checking
+            checkMathJax();
+          });
+        };
+
+        // Enhanced process LaTeX function with reliable MathJax checking
+        const processLatex = async () => {
+          try {
+            // Wait for MathJax to be ready
+            await waitForMathJax();
+
+            // Only proceed if we have MathJax
+            if (window.MathJax && window.MathJax.typesetPromise) {
+              await window.MathJax.typesetPromise()
+                .catch((err) => console.error('MathJax typesetting failed:', err));
+              console.log('LaTeX processing complete');
+            }
+          } catch (err) {
+            console.error('Error in processLatex:', err);
+          }
+        };
+
         // Fetch conversations from API
         const fetchConversations = async () => {
           if (!isAuthenticated.value || !authToken.value) return;
@@ -352,7 +433,7 @@
           }
         };
 
-        // Fetch messages for a conversation
+        // Fetch messages for a conversation with enhanced LaTeX support
         const fetchMessages = async (chatId) => {
           if (!chatId || chatId.startsWith('temp-')) return;
 
@@ -368,6 +449,12 @@
                 type: msg.type, // 'human' or 'ai'
                 thread_id: msg.thread_id
               }));
+
+              // Process LaTeX in the loaded messages after a brief delay
+              // to ensure the DOM has updated
+              setTimeout(() => {
+                processLatex();
+              }, 300);
             }
           } catch (error) {
             console.error(`Error fetching messages for chat ${chatId}:`, error);
@@ -389,7 +476,7 @@
           if (!chat.messages || chat.messages.length === 0) return "No messages";
           const lastMessage = chat.messages[chat.messages.length - 1];
           // Strip markdown and limit to 30 chars
-          const plainText = lastMessage.content.replace(/[#*_`~]/g, '');
+          const plainText = lastMessage.content.replace(/[#*_`~$]/g, '');
           return plainText.length > 30 ? plainText.substring(0, 30) + '...' : plainText;
         };
 
@@ -459,6 +546,14 @@
           }
         };
 
+        // Enhanced render markdown function to properly handle LaTeX
+        const renderMarkdown = (text) => {
+          if (!text) return '';
+          // Parse markdown with marked
+          return marked.parse(text || '');
+        };
+
+        // Enhanced sendMessage with improved LaTeX handling
         const sendMessage = async () => {
           if (!newMessage.value.trim() || !activeChat.value) return;
 
@@ -547,13 +642,15 @@
               }
             } finally {
               isSending.value = false;
-              scrollToBottom();
+
+              // Ensure we process LaTeX after streaming completes with a longer delay
+              // to ensure the final content is fully rendered
+              setTimeout(() => {
+                scrollToBottom();
+                processLatex();
+              }, 500);
             }
           }
-        };
-
-        const renderMarkdown = (text) => {
-          return marked.parse(text || '');
         };
 
         const scrollToBottom = () => {
@@ -564,12 +661,12 @@
           });
         };
 
-        // NEW: Toggle menu visibility
+        // Toggle menu visibility
         const toggleMenu = (chatId) => {
           openMenuId.value = openMenuId.value === chatId ? null : chatId;
         };
 
-        // NEW: Edit conversation title
+        // Edit conversation title
         const editConversationTitle = (chat) => {
           // Close the menu
           openMenuId.value = null;
@@ -586,7 +683,7 @@
           });
         };
 
-        // NEW: Save edited conversation title
+        // Save edited conversation title
         const saveConversationTitle = async (chat) => {
           if (!chat.editingName.trim()) {
             chat.editingName = 'Untitled Chat';
@@ -608,13 +705,13 @@
           }
         };
 
-        // NEW: Cancel editing conversation title
+        // Cancel editing conversation title
         const cancelEditingTitle = (chat) => {
           chat.editingName = chat.name;
           chat.isEditing = false;
         };
 
-        // NEW: Delete conversation
+        // Delete conversation
         const deleteConversation = async (chatId) => {
           if (confirm('Are you sure you want to delete this conversation?')) {
             try {
@@ -641,14 +738,20 @@
           }
         };
 
-        // Auto-scroll when messages change
+        // Watch for when messages change for LaTeX processing
         watch(() => activeChat.value?.messages, () => {
           scrollToBottom();
+          // Process LaTeX when messages change with a slight delay
+          setTimeout(() => {
+            processLatex();
+          }, 300);
         }, { deep: true });
 
-        // Auto-scroll when active chat changes
+        // Watch for active chat changes
         watch(activeChatId, () => {
-          scrollToBottom();
+          nextTick(() => {
+            scrollToBottom();
+          });
         });
 
         // Set up HTTP interceptor for token
@@ -714,6 +817,7 @@
           setActiveChat,
           sendMessage,
           renderMarkdown,
+          processLatex,
           fetchConversations,
           fetchMessages,
           formatDate,
