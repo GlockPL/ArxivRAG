@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vue Chat App</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.0/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body, html {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #app {
+      display: flex;
+      height: 100vh;
+      background-color: #f5f5f5;
+    }
+
+    /* Login styles */
+    .login-container {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      width: 100%;
+      background-color: #f5f5f5;
+    }
+
+    .login-form {
+      background-color: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .login-form h1 {
+      text-align: center;
+      margin-bottom: 25px;
+      color: #2c3e50;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+      color: #333;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 16px;
+      transition: border-color 0.2s;
+    }
+
+    .form-group input:focus {
+      border-color: #3498db;
+      outline: none;
+    }
+
+    .login-btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 5px;
+      background-color: #3498db;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .login-btn:hover {
+      background-color: #2980b9;
+    }
+
+    .login-btn:disabled {
+      background-color: #95a5a6;
+      cursor: not-allowed;
+    }
+
+    .error-message {
+      color: #e74c3c;
+      margin-top: 15px;
+      text-align: center;
+    }
+
+    /* Chat app styles */
+    .sidebar {
+      width: 280px;
+      background-color: #2c3e50;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #3d5166;
+    }
+
+    .sidebar-header h2 {
+      font-size: 20px;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      padding: 10px 15px;
+      border-bottom: 1px solid #3d5166;
+    }
+
+    .user-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background-color: #3498db;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-right: 10px;
+      font-weight: bold;
+      color: white;
+    }
+
+    .user-details {
+      flex: 1;
+    }
+
+    .user-name {
+      font-weight: bold;
+    }
+
+    .logout-btn {
+      margin-left: 10px;
+      color: #ccc;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .logout-btn:hover {
+      color: white;
+    }
+
+    .new-chat-btn {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background-color 0.2s;
+    }
+
+    .new-chat-btn:hover {
+      background-color: #2980b9;
+    }
+
+    .chat-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    .chat-item {
+      padding: 12px;
+      margin-bottom: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-item:hover {
+      background-color: #3d5166;
+    }
+
+    .chat-item.active {
+      background-color: #3498db;
+    }
+
+    .chat-item .chat-name {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .chat-item .chat-preview {
+      font-size: 0.8rem;
+      opacity: 0.8;
+    }
+
+    .chat-item .chat-date {
+      font-size: 0.7rem;
+      opacity: 0.7;
+      margin-bottom: 3px;
+    }
+
+    .chat-loading, .no-chats {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      color: #ccc;
+      text-align: center;
+    }
+
+    .loading-spinner {
+      border: 3px solid rgba(255,255,255,0.1);
+      border-radius: 50%;
+      border-top: 3px solid #fff;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 10px;
+    }
+
+    .start-first-chat {
+      margin-top: 10px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .chat-header {
+      padding: 15px;
+      background-color: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      z-index: 1;
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      background-color: #f9f9f9;
+    }
+
+    .message {
+      margin-bottom: 15px;
+      display: flex;
+      align-items: flex-start;
+    }
+
+    .message-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background-color: #ddd;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-right: 10px;
+      font-weight: bold;
+      color: #555;
+    }
+
+    .message-content {
+      flex: 1;
+      background-color: white;
+      padding: 12px;
+      border-radius: 10px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      max-width: 80%;
+    }
+
+    .message.sent {
+      flex-direction: row-reverse;
+    }
+
+    .message.sent .message-avatar {
+      margin-right: 0;
+      margin-left: 10px;
+      background-color: #3498db;
+      color: white;
+    }
+
+    .message.sent .message-content {
+      background-color: #3498db;
+      color: white;
+    }
+
+    .chat-input {
+      padding: 15px;
+      background-color: white;
+      border-top: 1px solid #eee;
+    }
+
+    .input-area {
+      display: flex;
+      position: relative;
+    }
+
+    .message-input {
+      flex: 1;
+      padding: 12px 15px;
+      border: 1px solid #ddd;
+      border-radius: 24px;
+      resize: none;
+      outline: none;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .send-btn {
+      margin-left: 10px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 20px;
+      transition: background-color 0.2s;
+    }
+
+    .send-btn:hover {
+      background-color: #2980b9;
+    }
+
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3 {
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .markdown-content p {
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content code {
+      background-color: #f0f0f0;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-family: monospace;
+    }
+
+    .markdown-content pre {
+      background-color: #f6f8fa;
+      padding: 1rem;
+      border-radius: 5px;
+      overflow-x: auto;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content pre code {
+      background-color: transparent;
+      padding: 0;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+      color: #666;
+      padding: 0 20px;
+      text-align: center;
+    }
+
+    .empty-state i {
+      font-size: 50px;
+      margin-bottom: 20px;
+      color: #ddd;
+    }
+
+    .empty-state h3 {
+      margin-bottom: 10px;
+    }
+
+    .empty-state p {
+      margin-bottom: 20px;
+      max-width: 400px;
+    }
+
+    .start-chat-btn {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background-color 0.2s;
+    }
+
+    .start-chat-btn:hover {
+      background-color: #2980b9;
+    }
+
+    /* Loader */
+    .loader {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 10px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Login Screen -->
+    <div class="login-container" v-if="!isAuthenticated">
+      <div class="login-form">
+        <h1>Chat App Login</h1>
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input
+            type="text"
+            id="username"
+            v-model="loginForm.username"
+            @keyup.enter="login"
+            placeholder="Enter your username"
+          >
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input
+            type="password"
+            id="password"
+            v-model="loginForm.password"
+            @keyup.enter="login"
+            placeholder="Enter your password"
+          >
+        </div>
+        <button
+          class="login-btn"
+          @click="login"
+          :disabled="isLoggingIn || !loginForm.username || !loginForm.password"
+        >
+          <span class="loader" v-if="isLoggingIn"></span>
+          {{ isLoggingIn ? 'Logging in...' : 'Login' }}
+        </button>
+        <div class="error-message" v-if="loginError">
+          {{ loginError }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat App -->
+    <template v-else>
+      <div class="sidebar">
+        <div class="user-info">
+          <div class="user-avatar">
+            {{ userInitial }}
+          </div>
+          <div class="user-details">
+            <div class="user-name">{{ username }}</div>
+          </div>
+          <button class="logout-btn" @click="logout">
+            <i class="fas fa-sign-out-alt"></i>
+          </button>
+        </div>
+        <div class="sidebar-header">
+          <h2>Chats</h2>
+          <button class="new-chat-btn" @click="createNewChat">
+            <i class="fas fa-plus"></i> New
+          </button>
+        </div>
+        <div class="chat-list">
+          <div v-if="isLoadingConversations" class="chat-loading">
+            <div class="loading-spinner"></div>
+            <span>Loading conversations...</span>
+          </div>
+          <div v-else-if="chats.length === 0" class="no-chats">
+            <p>No conversations yet</p>
+            <button class="start-first-chat" @click="createNewChat">Start your first chat</button>
+          </div>
+          <div
+            v-else
+            v-for="chat in chats"
+            :key="chat.id"
+            class="chat-item"
+            :class="{ active: activeChatId === chat.id }"
+            @click="setActiveChat(chat.id)"
+          >
+            <div class="chat-name">{{ chat.name }}</div>
+            <div class="chat-date">{{ formatDate(chat.createdAt) }}</div>
+            <div class="chat-preview">{{ getLastMessagePreview(chat) }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="main">
+        <template v-if="activeChat">
+          <div class="chat-header">
+            <h2>{{ activeChat.name }}</h2>
+          </div>
+          <div class="chat-messages" ref="messagesContainer">
+            <div
+              v-for="(message, index) in activeChat.messages"
+              :key="index"
+              class="message"
+              :class="{ sent: message.fromMe }"
+            >
+              <div class="message-avatar">
+                {{ message.fromMe ? userInitial : 'AI' }}
+              </div>
+              <div class="message-content markdown-content" v-html="renderMarkdown(message.text)"></div>
+            </div>
+          </div>
+          <div class="chat-input">
+            <div class="input-area">
+              <textarea
+                class="message-input"
+                v-model="newMessage"
+                placeholder="Type a message (supports markdown)..."
+                @keydown.enter.prevent="sendMessage"
+                ref="messageInput"
+              ></textarea>
+              <button class="send-btn" @click="sendMessage">
+                <i class="fas fa-paper-plane"></i>
+              </button>
+            </div>
+          </div>
+        </template>
+        <div v-else class="empty-state">
+          <i class="fas fa-comments"></i>
+          <h3>No chat selected</h3>
+          <p>Select an existing chat from the sidebar or create a new one to get started.</p>
+          <button class="start-chat-btn" @click="createNewChat">Start a new chat</button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <script>
+    const { createApp, ref, computed, watch, nextTick } = Vue;
+
+    createApp({
+      setup() {
+        // Authentication state
+        const isAuthenticated = ref(false);
+        const authToken = ref('');
+        const username = ref('');
+        const isLoggingIn = ref(false);
+        const loginError = ref('');
+        const isLoadingConversations = ref(false);
+        const apiBaseUrl = 'http://localhost:8000';
+        const loginForm = ref({
+          username: '',
+          password: ''
+        });
+
+        // Check if token exists in localStorage
+        const storedToken = localStorage.getItem('chatToken');
+        const storedUser = localStorage.getItem('chatUsername');
+        if (storedToken && storedUser) {
+          authToken.value = storedToken;
+          username.value = storedUser;
+          isAuthenticated.value = true;
+        }
+
+        const userInitial = computed(() => {
+          return username.value ? username.value.charAt(0).toUpperCase() : '';
+        });
+
+        // Login function
+        const login = async () => {
+          if (!loginForm.value.username || !loginForm.value.password) return;
+
+          loginError.value = '';
+          isLoggingIn.value = true;
+
+          try {
+            // Create form data for OAuth2 password flow
+            const formData = new FormData();
+            formData.append('username', loginForm.value.username);
+            formData.append('password', loginForm.value.password);
+
+            // Call the token endpoint
+            const response = await axios.post(`${apiBaseUrl}/token`, formData, {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+              }
+            });
+
+            // Store the token and username
+            authToken.value = response.data.access_token;
+            username.value = loginForm.value.username;
+
+            // Save to localStorage for persistence
+            localStorage.setItem('chatToken', authToken.value);
+            localStorage.setItem('chatUsername', username.value);
+
+            // Set authenticated state
+            isAuthenticated.value = true;
+
+            // Reset login form
+            loginForm.value = {
+              username: '',
+              password: ''
+            };
+
+            // Fetch conversations after successful login
+            await fetchConversations();
+          } catch (error) {
+            console.error('Login error:', error);
+
+            if (error.response && error.response.status === 401) {
+              loginError.value = "Incorrect username or password";
+            } else {
+              loginError.value = "Login failed. Please try again.";
+            }
+          } finally {
+            isLoggingIn.value = false;
+          }
+        };
+
+        // Logout function
+        const logout = () => {
+          authToken.value = '';
+          username.value = '';
+          isAuthenticated.value = false;
+          localStorage.removeItem('chatToken');
+          localStorage.removeItem('chatUsername');
+        };
+
+        // Set up marked.js with highlight.js for code blocks
+        marked.setOptions({
+          highlight: function(code, lang) {
+            if (lang && hljs.getLanguage(lang)) {
+              return hljs.highlight(code, { language: lang }).value;
+            }
+            return hljs.highlightAuto(code).value;
+          },
+          breaks: true
+        });
+
+        const chats = ref([]);
+
+        // Fetch conversations from API
+        const fetchConversations = async () => {
+          if (!isAuthenticated.value || !authToken.value) return;
+
+          isLoadingConversations.value = true;
+          try {
+            const response = await axios.get(`${apiBaseUrl}/conversations`);
+
+            // Map API response to our chat format
+            const conversationsData = response.data || [];
+            console.log('Received conversations:', conversationsData);
+
+            chats.value = conversationsData.map(conversation => {
+              // Ensure we have valid data with defaults for missing fields
+              return {
+                id: conversation.thread_id || `temp-${Date.now()}`,
+                name: conversation.title || `Untitled Chat`,
+                createdAt: conversation.created_at ? new Date(conversation.created_at) : new Date(),
+                messages: [
+                  {
+                    fromMe: false,
+                    text: "Click to continue this conversation."
+                  }
+                ]
+              };
+            });
+
+            console.log('Parsed chats:', chats.value);
+
+            // Sort by most recent first
+            chats.value.sort((a, b) => b.createdAt - a.createdAt);
+
+            // Select first chat if available
+            if (chats.value.length > 0 && !activeChatId.value) {
+              setActiveChat(chats.value[0].id);
+            }
+          } catch (error) {
+            console.error('Error fetching conversations:', error);
+          } finally {
+            isLoadingConversations.value = false;
+          }
+        };
+
+        const activeChatId = ref(null);
+        const newMessage = ref("");
+        const messagesContainer = ref(null);
+        const messageInput = ref(null);
+
+        const activeChat = computed(() => {
+          return chats.value.find(chat => chat.id === activeChatId.value) || null;
+        });
+
+        const getLastMessagePreview = (chat) => {
+          if (chat.messages.length === 0) return "No messages";
+          const lastMessage = chat.messages[chat.messages.length - 1];
+          // Strip markdown and limit to 30 chars
+          const plainText = lastMessage.text.replace(/[#*_`~]/g, '');
+          return plainText.length > 30 ? plainText.substring(0, 30) + '...' : plainText;
+        };
+
+        const formatDate = (date) => {
+          if (!date) return '';
+
+          // Make sure we have a valid date object
+          let messageDate;
+          try {
+            messageDate = date instanceof Date ? date : new Date(date);
+            // Check if the date is valid
+            if (isNaN(messageDate.getTime())) {
+              return 'Invalid date';
+            }
+          } catch (e) {
+            return 'Invalid date';
+          }
+
+          const now = new Date();
+
+          // If today, show time
+          if (messageDate.toDateString() === now.toDateString()) {
+            return messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          }
+
+          // If this year, show month and day
+          if (messageDate.getFullYear() === now.getFullYear()) {
+            return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          }
+
+          // Otherwise show full date
+          return messageDate.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        };
+
+        const createNewChat = async () => {
+          // In a real implementation, you would call an API to create a new conversation
+          // For now, we'll simulate this with a local chat
+          const tempId = `temp-${Date.now()}`;
+
+          const newChat = {
+            id: tempId,
+            name: `New Chat`,
+            createdAt: new Date(),
+            messages: [
+              {
+                fromMe: false,
+                text: "Hello! How can I help you today?"
+              }
+            ]
+          };
+
+          // Add to beginning of list
+          chats.value.unshift(newChat);
+          setActiveChat(tempId);
+
+          // In a real implementation, you would then sync with the server
+          // For example:
+          // const response = await axios.post(`${apiBaseUrl}/conversations`, { title: "New Chat" });
+          // const realId = response.data.thread_id;
+          // Update the temporary chat with the real ID
+        };
+
+        const setActiveChat = (id) => {
+          activeChatId.value = id;
+        };
+
+        const sendMessage = () => {
+          if (!newMessage.value.trim() || !activeChat.value) return;
+
+          // Add user message
+          activeChat.value.messages.push({
+            fromMe: true,
+            text: newMessage.value
+          });
+
+          // Simulate response
+          setTimeout(() => {
+            if (activeChat.value) {
+              const responses = [
+                "I understand. Can you tell me more?",
+                "That's interesting! Let me think about that.",
+                "Thanks for sharing. I'd like to help with that.",
+                "Great question. Here's what I know:\n\n```js\nconst answer = 'It depends on the context';\nconsole.log(answer);\n```",
+                "I appreciate your input. Let me respond with a list:\n\n* First point\n* Second point\n* Third point",
+                "Let me explain with a **bold** statement and some *italics*. [Here's a link](https://example.com) for more information."
+              ];
+
+              const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+
+              activeChat.value.messages.push({
+                fromMe: false,
+                text: randomResponse
+              });
+
+              // Scroll to bottom after new message
+              scrollToBottom();
+            }
+          }, 1000);
+
+          newMessage.value = "";
+
+          // Focus back on input
+          nextTick(() => {
+            messageInput.value.focus();
+          });
+
+          // Scroll to bottom
+          scrollToBottom();
+        };
+
+        const renderMarkdown = (text) => {
+          return marked.parse(text);
+        };
+
+        const scrollToBottom = () => {
+          nextTick(() => {
+            if (messagesContainer.value) {
+              messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+            }
+          });
+        };
+
+        // Auto-scroll when messages change
+        watch(() => activeChat.value?.messages, () => {
+          scrollToBottom();
+        }, { deep: true });
+
+        // Auto-scroll when active chat changes
+        watch(activeChatId, () => {
+          scrollToBottom();
+        });
+
+        // Set up HTTP interceptor for token
+        // Set up HTTP interceptor for token
+        axios.interceptors.request.use(config => {
+          if (authToken.value) {
+            config.headers.Authorization = `Bearer ${authToken.value}`;
+          }
+          return config;
+        }, error => {
+          return Promise.reject(error);
+        });
+
+        // Add response interceptor for handling auth errors
+        axios.interceptors.response.use(response => {
+          return response;
+        }, error => {
+          if (error.response && error.response.status === 401) {
+            // Token expired or invalid, log the user out
+            logout();
+          }
+          return Promise.reject(error);
+        });
+
+        // Initial data loading when component mounts
+        if (isAuthenticated.value) {
+          // Use nextTick to ensure this runs after component setup
+          nextTick(() => {
+            fetchConversations();
+          });
+        }
+
+        // Watch authentication state changes, but don't set up a recursive loop
+        watch(() => isAuthenticated.value, (newValue) => {
+          if (newValue === true) {
+            fetchConversations();
+          }
+        }, { immediate: false });
+
+        return {
+          // Auth state
+          isAuthenticated,
+          username,
+          loginForm,
+          isLoggingIn,
+          loginError,
+          userInitial,
+          login,
+          logout,
+
+          // Chat state
+          chats,
+          activeChatId,
+          activeChat,
+          newMessage,
+          messagesContainer,
+          messageInput,
+          isLoadingConversations,
+          getLastMessagePreview,
+          createNewChat,
+          setActiveChat,
+          sendMessage,
+          renderMarkdown,
+          fetchConversations,
+          formatDate
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
