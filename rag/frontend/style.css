@@ -512,10 +512,6 @@ body, html {
     overflow: visible;
 }
 
-.chat-list {
-    overflow: visible;
-}
-
 .chat-menu-button {
     position: absolute;
     right: 10px;
@@ -645,4 +641,84 @@ body, html {
     border-radius: 6px;
     overflow-x: auto;
     text-align: center;
+}
+
+/* Pagination Controls */
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 15px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+}
+
+.pagination-btn {
+  background-color: #f0f2f5;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background-color: #e4e6e9;
+}
+
+.pagination-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.page-indicator {
+  margin: 0 12px;
+  font-size: 14px;
+  color: #65676b;
+}
+
+/* Add this to the no-chats section to handle pagination empty state better */
+.no-chats {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 15px;
+  text-align: center;
+  color: #65676b;
+  height: 150px;
+}
+
+.no-chats p {
+  margin-bottom: 15px;
+}
+
+/* Improved loading state for pagination */
+.chat-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 15px;
+  color: #65676b;
+  height: 150px;
+}
+
+.loading-spinner {
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-top: 3px solid #3498db;
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

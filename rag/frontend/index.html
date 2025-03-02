@@ -41,6 +41,61 @@
 
   <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" rel="stylesheet">
   <link rel="stylesheet" type="text/css" href="style.css" />
+
+  <!-- Add styles for pagination -->
+  <style>
+    .pagination-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 15px;
+      border-top: 1px solid #e0e0e0;
+      background-color: #f5f5f5;
+      font-size: 14px;
+    }
+
+    .pagination-buttons {
+      display: flex;
+      gap: 5px;
+    }
+
+    .pagination-button {
+      background-color: #f0f0f0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 5px 10px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .pagination-button:hover {
+      background-color: #e0e0e0;
+    }
+
+    .pagination-button:disabled {
+      background-color: #f0f0f0;
+      color: #aaa;
+      cursor: not-allowed;
+    }
+
+    .pagination-info {
+      color: #666;
+      font-size: 12px;
+    }
+
+    .page-size-selector {
+      margin-left: 10px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .page-size-selector select {
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 3px 5px;
+    }
+  </style>
 </head>
 <body>
   <div id="app">
@@ -161,6 +216,41 @@
               </div>
             </div>
           </div>
+
+          <!-- Pagination Controls -->
+          <div class="pagination-controls" v-if="chats.length > 0">
+            <div class="pagination-info">
+              Showing {{ paginationOffset + 1 }}-{{ paginationOffset + chats.length }} conversations
+            </div>
+
+            <div class="pagination-buttons">
+              <button
+                class="pagination-button"
+                @click="previousPage"
+                :disabled="paginationOffset === 0"
+              >
+                <i class="fas fa-chevron-left"></i> Previous
+              </button>
+
+              <button
+                class="pagination-button"
+                @click="nextPage"
+                :disabled="!hasMorePages"
+              >
+                Next <i class="fas fa-chevron-right"></i>
+              </button>
+
+              <div class="page-size-selector">
+                <span>Show:</span>
+                <select v-model="paginationLimit" @change="updatePagination">
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="main">
@@ -236,6 +326,10 @@
           password: ''
         });
 
+        // Pagination state
+        const paginationLimit = ref(10);
+        const paginationOffset = ref(0);
+
         // Menu state
         const openMenuId = ref(null);
         const titleInput = ref(null);
@@ -247,6 +341,12 @@
           authToken.value = storedToken;
           username.value = storedUser;
           isAuthenticated.value = true;
+        }
+
+        // Load pagination settings from localStorage if available
+        const storedLimit = localStorage.getItem('paginationLimit');
+        if (storedLimit) {
+          paginationLimit.value = parseInt(storedLimit);
         }
 
         const userInitial = computed(() => {
@@ -319,6 +419,7 @@
           localStorage.removeItem('chatUsername');
           chats.value = [];
           activeChatId.value = null;
+          paginationOffset.value = 0;
         };
 
         // Set up marked.js with modern configuration (version 5+)
@@ -393,13 +494,18 @@
           }
         };
 
-        // Fetch conversations from API
+        // Updated fetch conversations with pagination
         const fetchConversations = async () => {
           if (!isAuthenticated.value || !authToken.value) return;
 
           isLoadingConversations.value = true;
           try {
-            const response = await axios.get(`${apiBaseUrl}/conversations`);
+            const response = await axios.get(`${apiBaseUrl}/conversations`, {
+              params: {
+                limit: paginationLimit.value,
+                offset: paginationOffset.value
+              }
+            });
 
             // Map API response to our chat format
             const conversationsData = response.data || [];
@@ -419,18 +525,46 @@
 
             console.log('Parsed chats:', chats.value);
 
-            // Sort by most recent first
+            // Sort by most recent first (already sorted by API, but just in case)
             chats.value.sort((a, b) => b.createdAt - a.createdAt);
 
-            // Select first chat if available
+            // Select first chat if available and no active chat
             if (chats.value.length > 0 && !activeChatId.value) {
               setActiveChat(chats.value[0].id);
+            } else if (chats.value.length === 0) {
+              // Clear active chat if we have no chats
+              activeChatId.value = null;
             }
           } catch (error) {
             console.error('Error fetching conversations:', error);
           } finally {
             isLoadingConversations.value = false;
           }
+        };
+
+        // Pagination navigation functions
+        const nextPage = async () => {
+          if (chats.value.length < paginationLimit.value) return; // No more pages
+
+          paginationOffset.value += paginationLimit.value;
+          await fetchConversations();
+        };
+
+        const previousPage = async () => {
+          if (paginationOffset.value === 0) return; // Already at first page
+
+          paginationOffset.value = Math.max(0, paginationOffset.value - paginationLimit.value);
+          await fetchConversations();
+        };
+
+        const updatePagination = async () => {
+          // When changing page size, reset to first page
+          paginationOffset.value = 0;
+
+          // Save pagination limit to localStorage
+          localStorage.setItem('paginationLimit', paginationLimit.value);
+
+          await fetchConversations();
         };
 
         // Fetch messages for a conversation with enhanced LaTeX support
@@ -526,8 +660,19 @@
               editingName: `New Chat`
             };
 
-            // Add to beginning of list
-            chats.value.unshift(newChat);
+            // If we're at the first page, add to the beginning of the list
+            if (paginationOffset.value === 0) {
+              chats.value.unshift(newChat);
+              // If we have more than the limit, remove the last one
+              if (chats.value.length > paginationLimit.value) {
+                chats.value.pop();
+              }
+            } else {
+              // Go to the first page if we're not already there
+              paginationOffset.value = 0;
+              await fetchConversations();
+            }
+
             setActiveChat(newChatId);
           } catch (error) {
             console.error('Error creating new chat:', error);
@@ -718,18 +863,23 @@
               // Call API to delete conversation
               await axios.delete(`${apiBaseUrl}/conversations/${chatId}`);
 
-              // Remove from local state
-              const index = chats.value.findIndex(c => c.id === chatId);
-              if (index !== -1) {
-                chats.value.splice(index, 1);
-              }
-
               // If the active chat was deleted, clear active chat
               if (activeChatId.value === chatId) {
-                activeChatId.value = chats.value.length > 0 ? chats.value[0].id : null;
-                if (activeChatId.value) {
-                  await fetchMessages(activeChatId.value);
-                }
+                activeChatId.value = null;
+              }
+
+              // Refresh the current page after deletion
+              await fetchConversations();
+
+              // If we now have no chats on this page and it's not the first page, go to previous page
+              if (chats.value.length === 0 && paginationOffset.value > 0) {
+                paginationOffset.value = Math.max(0, paginationOffset.value - paginationLimit.value);
+                await fetchConversations();
+              }
+
+              // Select a new active chat if needed
+              if (activeChatId.value === null && chats.value.length > 0) {
+                setActiveChat(chats.value[0].id);
               }
             } catch (error) {
               console.error('Error deleting conversation:', error);
@@ -737,6 +887,11 @@
             }
           }
         };
+
+        // Check if we have more pages (for pagination "Next" button state)
+        const hasMorePages = computed(() => {
+          return chats.value.length >= paginationLimit.value;
+        });
 
         // Watch for when messages change for LaTeX processing
         watch(() => activeChat.value?.messages, () => {
@@ -783,6 +938,13 @@
           });
         }
 
+        // Watch for pagination limit changes to re-fetch
+        watch(paginationLimit, () => {
+          if (isAuthenticated.value) {
+            updatePagination();
+          }
+        });
+
         // Watch authentication state changes, but don't set up a recursive loop
         watch(() => isAuthenticated.value, (newValue) => {
           if (newValue === true) {
@@ -821,6 +983,14 @@
           fetchConversations,
           fetchMessages,
           formatDate,
+
+          // Pagination state and functions
+          paginationLimit,
+          paginationOffset,
+          nextPage,
+          previousPage,
+          updatePagination,
+          hasMorePages,
 
           // Menu state and functions
           openMenuId,
