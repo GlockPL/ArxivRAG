@@ -1,7 +1,7 @@
 from typing import Generator, Iterator
 
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, AnyMessage, ToolMessage
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, AnyMessage, ToolMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool

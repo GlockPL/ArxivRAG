@@ -1645,6 +1645,17 @@ streamlit = ">=0.63"
 devel = ["wheel", "pytest (==7.4.0)", "playwright (==1.39.0)", "requests (==2.31.0)", "pytest-playwright-snapshot (==1.0)", "pytest-rerunfailures (==12.0)"]
 
 [[package]]
+name = "streamlit-option-menu"
+version = "0.4.0"
+description = "streamlit-option-menu is a simple Streamlit component that allows users to select a single item from a list of options in a menu."
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[package.dependencies]
+streamlit = ">=1.36"
+
+[[package]]
 name = "tenacity"
 version = "9.0.0"
 description = "Retry code until it succeeds"
@@ -1835,7 +1846,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.11"
-content-hash = "d3654bf63d91ab53ff6bfd4deac58bdea69b3fed0f7eb20ba9a947c6b2e02f7f"
+content-hash = "c14b16556e4a9d47f266fbe66d864485c64b1dc04bca5d6403554c4421410313"
 
 [metadata.files]
 aiohappyeyeballs = []
@@ -1960,6 +1971,7 @@ starlette = []
 streamlit = []
 streamlit-authenticator = []
 streamlit-cookies-controller = []
+streamlit-option-menu = []
 tenacity = []
 tiktoken = []
 toml = []
