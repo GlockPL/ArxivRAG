@@ -1,3 +1,4 @@
+import json
 import random
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
@@ -16,7 +17,7 @@ from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker
 
 from rag.settings import DBSettings, TokenSettings
-from rag.db.db_objects import User, LoginHistory, ConversationTitle, Base
+from rag.db.db_objects import User, LoginHistory, ConversationTitle, Base, CheckpointBlob, CheckpointWrite, Checkpoint
 from rag.rag_pipeline import RAG
 
 db_settings = DBSettings()
@@ -320,6 +321,7 @@ async def validate_token(token: str = Depends(oauth2_scheme)):
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+
 @app.get("/conversations/count", response_model=dict)
 async def count_conversations(
         current_user: User = Depends(get_current_user),
@@ -327,6 +329,7 @@ async def count_conversations(
 ):
     count = get_user_conversation_count(db, current_user.id)
     return {"total": count}
+
 
 @app.get("/conversations", response_model=List[ConversationResponse])
 async def list_conversations(
@@ -398,16 +401,28 @@ def generate_thread_id() -> str:
     return f"id_{new_thread_id}_{random.randint(0, 100000)}"
 
 
-async def stream_generator(query: str, thread_id: str) -> AsyncGenerator[str, None]:
+async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGenerator[str, None]:
     try:
-        # Use the RAG streaming function
-        for token in rag.stream(query=query, thread_id=thread_id):
-            # Just yield the token directly
-            yield token
+        # Send an initial event to establish the connection
+        yield "data: {\"type\": \"connection_established\"}\n\n"
+
+        # Stream content from RAG
+        for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
+            # Ensure the token is properly JSON escaped
+            escaped_token = json.dumps(token)
+            # Format as a proper SSE message
+            yield f"data: {escaped_token}\n\n"
+
+            # Force flush with a small delay to ensure incremental delivery
+            await asyncio.sleep(0.01)
 
     except Exception as e:
         print(f"Error in streaming: {str(e)}")
-        yield f"ERROR: {str(e)}"
+        error_msg = json.dumps({"error": str(e)})
+        yield f"data: {error_msg}\n\n"
+
+    # Send an end message
+    yield "data: [DONE]\n\n"
 
 
 @app.get("/conversations/new/stream")
@@ -429,13 +444,16 @@ async def stream_new_messages(
     # Create response headers with the thread ID
     headers = {
         "X-Thread-ID": new_thread_id,
-        "Access-Control-Expose-Headers": "X-Thread-ID"  # Necessary for CORS to expose custom headers
+        "Access-Control-Expose-Headers": "X-Thread-ID",
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
     }
 
-    # Return a StreamingResponse with plain text content type and custom headers
+    # Return a StreamingResponse with proper SSE media type and headers
     return StreamingResponse(
-        stream_generator(query, new_thread_id),
-        media_type="text/plain",
+        stream_generator(query, new_thread_id, current_user.id),
+        media_type="text/event-stream",
         headers=headers
     )
 
@@ -453,21 +471,15 @@ async def stream_messages(
         if convo.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
-    async def stream_generator() -> AsyncGenerator[str, None]:
-        try:
-            # Use the RAG streaming function
-            for token in rag.stream(query=query, thread_id=thread_id):
-                # Just yield the token directly
-                yield token
-
-        except Exception as e:
-            print(f"Error in streaming: {str(e)}")
-            yield f"ERROR: {str(e)}"
-
-    # Return a StreamingResponse with plain text content type
+    # Return a StreamingResponse with proper SSE configuration
     return StreamingResponse(
-        stream_generator(),
-        media_type="text/plain"
+        stream_generator(query, thread_id, current_user.id),
+        media_type="text/event-stream",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
     )
 
 
@@ -493,6 +505,40 @@ async def update_conversation_title(
     db.refresh(convo)
 
     return convo
+
+
+@app.delete("/conversations/{thread_id}", response_model=dict)
+async def delete_conversation(
+        thread_id: str,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    # Check if conversation exists and user has access
+    convo = get_one_conversation(db, thread_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check if user owns the conversation
+    if convo.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this conversation")
+
+    # Delete all checkpoint data related to this thread_id
+    # Start with checkpoint_blobs
+    db.query(CheckpointBlob).filter(CheckpointBlob.thread_id == thread_id).delete()
+
+    # Delete checkpoint_writes
+    db.query(CheckpointWrite).filter(CheckpointWrite.thread_id == thread_id).delete()
+
+    # Delete checkpoints
+    db.query(Checkpoint).filter(Checkpoint.thread_id == thread_id).delete()
+
+    # Finally delete the conversation itself
+    db.delete(convo)
+
+    # Commit all changes
+    db.commit()
+
+    return {"message": f"Conversation {thread_id} and all associated checkpoints deleted successfully"}
 
 
 if __name__ == "__main__":

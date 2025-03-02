@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Generator, Iterator
 
 from langchain_core.documents import Document
@@ -13,11 +14,14 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import StateSnapshot
 from psycopg import Connection
 from pydantic import BaseModel
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from typing_extensions import TypedDict, List, Annotated
 
 from rag.db.db import WeaviateDB, PostgresDB
+from rag.db.db_objects import ConversationTitle
 from rag.settings import Settings, DBSettings
-from rag.utils import get_llm, get_big_llm, get_embeddings
+from rag.utils import get_llm, get_big_llm, get_embeddings, get_oai_llm
 
 
 class RetrieveInput(BaseModel):
@@ -27,7 +31,6 @@ class RetrieveInput(BaseModel):
 class GrapState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     title: str
-
 
 @tool(response_format="content_and_artifact", args_schema=RetrieveInput)
 def retrieve(query: str) -> tuple[str, List[Document]]:
@@ -64,7 +67,10 @@ class RAG:
         self.rag_prompt = PromptTemplate.from_template(self.template)
         self.db_settings = DBSettings()
         self.llm = get_llm()
+        # self.llm = get_oai_llm()
         db_uri = f"postgresql://{self.db_settings.user}:{self.db_settings.password}@{self.db_settings.host}:{self.db_settings.db_port}/{self.db_settings.user}?sslmode=disable"
+        self.engine = create_engine(db_uri)
+        self.session = Session(self.engine)
         self.connection = Connection.connect(db_uri, autocommit=True)
         self.graph = self.create_graph()
 
@@ -122,10 +128,18 @@ class RAG:
             response = self.llm.invoke(prompt)
             title = response.content
             thread_id = config["metadata"]["thread_id"]
+            user_id = config["configurable"]["user_id"]
 
-            pg = PostgresDB()
-            pg.insert_conversation_title(thread_id, title)
-            pg.close()
+            new_conversation = ConversationTitle(
+                thread_id=thread_id,
+                title=title,
+                created_at=datetime.now(),
+                user_id=user_id
+            )
+
+            # Add to session and commit
+            self.session.add(new_conversation)
+            self.session.commit()
 
             return {"title": title, "messages": messages}
 
@@ -169,9 +183,9 @@ class RAG:
         # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional
         return graph
 
-    def stream(self, query: str, thread_id: str) -> Generator[str, None, None]:
+    def stream(self, query: str, thread_id: str, user_id: int) -> Generator[str, None, None]:
         """Streams the final response tokens."""
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
         for chunk, metadata in self.graph.stream({"messages": [{"role": "user", "content": query}]}, config=config,
                                                  stream_mode="messages"):
             if chunk.content:
