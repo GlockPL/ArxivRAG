@@ -118,6 +118,7 @@ class ContextualIndexing:
 
 
             if 'title' not in json_article:
+                json_file.unlink(missing_ok=True)
                 continue
 
             for sec_number, section in enumerate(json_article['sections'], start=1):

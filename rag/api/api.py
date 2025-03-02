@@ -1,15 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+import random
+
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import List, Optional, Dict, AsyncGenerator
 from datetime import datetime, timedelta, UTC
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import asyncio
-from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker
@@ -73,8 +74,7 @@ class UserResponse(UserBase):
     id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TokenData(BaseModel):
@@ -107,8 +107,7 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     user_id: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatSummary(BaseModel):
@@ -117,8 +116,7 @@ class ChatSummary(BaseModel):
     created_at: datetime
     last_message: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # In-memory message queue for streaming
@@ -176,9 +174,13 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
 
 # ----- Chat Functions -----
 
-def get_user_conversations(db: Session, user_id: int):
+def get_user_conversations(db: Session, user_id: int, limit: int = 12, offset: int = 0):
     return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
-        desc(ConversationTitle.created_at)).all()
+        desc(ConversationTitle.created_at)).offset(offset).limit(limit).all()
+
+
+def get_user_conversation_count(db: Session, user_id: int):
+    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).count()
 
 
 def get_one_conversation(db: Session, thread_id: str):
@@ -318,13 +320,22 @@ async def validate_token(token: str = Depends(oauth2_scheme)):
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
-
-@app.get("/conversations", response_model=List[ConversationResponse])
-async def list_conversations(
+@app.get("/conversations/count", response_model=dict)
+async def count_conversations(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
-    user_convos = get_user_conversations(db, current_user.id)
+    count = get_user_conversation_count(db, current_user.id)
+    return {"total": count}
+
+@app.get("/conversations", response_model=List[ConversationResponse])
+async def list_conversations(
+        limit: int = Query(10, ge=1, le=100, description="Number of conversations to return"),
+        offset: int = Query(0, ge=0, description="Number of conversations to skip"),
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    user_convos = get_user_conversations(db, current_user.id, limit, offset)
 
     convos = []
     for convo in user_convos:
@@ -380,6 +391,53 @@ async def get_conversation_messages(
     # Get messages
     messages = get_messages(thread_id)
     return messages
+
+
+def generate_thread_id() -> str:
+    new_thread_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"id_{new_thread_id}_{random.randint(0, 100000)}"
+
+
+async def stream_generator(query: str, thread_id: str) -> AsyncGenerator[str, None]:
+    try:
+        # Use the RAG streaming function
+        for token in rag.stream(query=query, thread_id=thread_id):
+            # Just yield the token directly
+            yield token
+
+    except Exception as e:
+        print(f"Error in streaming: {str(e)}")
+        yield f"ERROR: {str(e)}"
+
+
+@app.get("/conversations/new/stream")
+async def stream_new_messages(
+        query: str,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    non_original = True
+    new_thread_id = generate_thread_id()
+    while non_original:
+        # Check if conversation exists and user has access
+        convo = get_one_conversation(db, new_thread_id)
+        if not convo:
+            non_original = False
+        else:
+            new_thread_id = generate_thread_id()
+
+    # Create response headers with the thread ID
+    headers = {
+        "X-Thread-ID": new_thread_id,
+        "Access-Control-Expose-Headers": "X-Thread-ID"  # Necessary for CORS to expose custom headers
+    }
+
+    # Return a StreamingResponse with plain text content type and custom headers
+    return StreamingResponse(
+        stream_generator(query, new_thread_id),
+        media_type="text/plain",
+        headers=headers
+    )
 
 
 @app.get("/conversations/{thread_id}/stream")

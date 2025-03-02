@@ -386,6 +386,7 @@ def ui_page():
                 st.session_state.current_thread_id = thread_id
                 st.rerun()
 
+
     conversation = fetch_conversation_messages(thread_id=st.session_state.current_thread_id)
     for message in conversation:
         if message["type"] == "human":
