@@ -85,6 +85,14 @@ test = ["anyio", "coverage[toml] (>=7)", "exceptiongroup (>=1.2.0)", "hypothesis
 doc = ["packaging", "Sphinx (>=7.4,<8.0)", "sphinx-rtd-theme", "sphinx-autodoc-typehints (>=1.2.0)"]
 
 [[package]]
+name = "async-timeout"
+version = "5.0.1"
+description = "Timeout context manager for asyncio programs"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[[package]]
 name = "atomicwrites"
 version = "1.4.1"
 description = "Atomic file writes."
@@ -1388,6 +1396,21 @@ optional = false
 python-versions = ">=3.8"
 
 [[package]]
+name = "redis"
+version = "5.2.1"
+description = "Python client for Redis database and key-value store"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[package.dependencies]
+async-timeout = {version = ">=4.0.3", markers = "python_full_version < \"3.11.3\""}
+
+[package.extras]
+hiredis = ["hiredis (>=3.0.0)"]
+ocsp = ["cryptography (>=36.0.1)", "pyopenssl (==23.2.1)", "requests (>=2.31.0)"]
+
+[[package]]
 name = "referencing"
 version = "0.36.2"
 description = "JSON Referencing + Python"
@@ -1846,7 +1869,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.11"
-content-hash = "c14b16556e4a9d47f266fbe66d864485c64b1dc04bca5d6403554c4421410313"
+content-hash = "180168e55704ae78e642f375e9fb043a6a6ca5f721433d881315e23045733299"
 
 [metadata.files]
 aiohappyeyeballs = []
@@ -1855,6 +1878,7 @@ aiosignal = []
 altair = []
 annotated-types = []
 anyio = []
+async-timeout = []
 atomicwrites = []
 attrs = []
 authlib = []
@@ -1953,6 +1977,7 @@ python-jose = []
 python-multipart = []
 pytz = []
 pyyaml = []
+redis = []
 referencing = []
 regex = []
 requests = []

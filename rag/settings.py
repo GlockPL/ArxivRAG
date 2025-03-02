@@ -46,3 +46,9 @@ class HostSettings(BaseSettings):
     host: str = Field("localhost", alias='HOST')
     port: int = Field(8000, alias='PORT')
     http_type: str = Field("http", alias='TYPE')
+
+class RedisSettings(BaseSettings):
+    redis_password: str = Field("", alias='REDIS_PASSWORD')
+    redis_host: str = Field("localhost", alias='REDIS_HOST')
+    redis_port: int = Field(6379, alias='REDIS_PORT')
+    redis_db: int = Field(0, alias='REDIS_DB')

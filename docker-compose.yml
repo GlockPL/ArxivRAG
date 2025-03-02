@@ -1,4 +1,5 @@
----
+version: '3.9'
+
 services:
   weaviate:
     command:
@@ -42,6 +43,18 @@ services:
     ports:
       - 8880:8080
 
+  redis:
+    image: redis:7.4
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/root/redis
+    environment:
+      - REDIS_PORT=6379
+
+
 volumes:
   weaviate_data:
   pg_data:
+  redis_data:

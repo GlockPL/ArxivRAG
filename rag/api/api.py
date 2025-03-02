@@ -1,6 +1,9 @@
 import json
 import random
+import uuid
+from urllib import request
 
+import bcrypt
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,16 +15,25 @@ from datetime import datetime, timedelta, UTC
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import asyncio
+import redis
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker
 
-from rag.settings import DBSettings, TokenSettings
+from rag.settings import DBSettings, TokenSettings, RedisSettings
 from rag.db.db_objects import User, LoginHistory, ConversationTitle, Base, CheckpointBlob, CheckpointWrite, Checkpoint
 from rag.rag_pipeline import RAG
 
 db_settings = DBSettings()
 token_settings = TokenSettings()
+redis_settings = RedisSettings()
+
+redis_client = redis.Redis(
+    host=redis_settings.redis_host,
+    port=redis_settings.redis_port,
+    db=redis_settings.redis_db,
+    decode_responses=True
+)
 
 postgres_db_uri = f"postgresql://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}?sslmode=disable"
 engine = create_engine(postgres_db_uri)
@@ -31,7 +43,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -80,10 +92,12 @@ class UserResponse(UserBase):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+    token_type: Optional[str] = None
 
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
 
 
@@ -124,14 +138,118 @@ class ChatSummary(BaseModel):
 user_message_queues: Dict[int, asyncio.Queue] = {}
 
 
+# ----- Token Management in Redis -----
+
+def add_to_blacklist(token: str, expires_in: int):
+    """Add a token to the blacklist (used tokens)"""
+    try:
+        redis_client.setex(f"bl_token:{token}", expires_in, "1")
+        return True
+    except Exception as e:
+        print(f"Redis error: {str(e)}")
+        return False
+
+
+def is_token_blacklisted(token: str) -> bool:
+    """Check if a token is blacklisted"""
+    try:
+        return bool(redis_client.exists(f"bl_token:{token}"))
+    except Exception as e:
+        print(f"Redis error: {str(e)}")
+        return False
+
+
+def store_refresh_token(user_id: int, token: str, expires_in: int):
+    """Store a refresh token for a user"""
+    try:
+        # Create user's token set if it doesn't exist
+        user_token_key = f"user:{user_id}:refresh_tokens"
+        redis_client.sadd(user_token_key, token)
+        # Set expiration for this specific token
+        redis_client.setex(f"refresh_token:{token}", expires_in, str(user_id))
+        return True
+    except Exception as e:
+        print(f"Redis error: {str(e)}")
+        return False
+
+
+def validate_refresh_token(token: str) -> Optional[int]:
+    """Validate a refresh token and return the user ID if valid"""
+    try:
+        user_id = redis_client.get(f"refresh_token:{token}")
+        if user_id:
+            return int(user_id)
+        return None
+    except Exception as e:
+        print(f"Redis error: {str(e)}")
+        return None
+
+
+def invalidate_refresh_token(token: str) -> bool:
+    """Invalidate a single refresh token"""
+    try:
+        # Get user ID associated with this token
+        user_id = redis_client.get(f"refresh_token:{token}")
+        if user_id:
+            # Remove token from user's set
+            redis_client.srem(f"user:{user_id}:refresh_tokens", token)
+        # Delete the token itself
+        redis_client.delete(f"refresh_token:{token}")
+        return True
+    except Exception as e:
+        print(f"Redis error: {str(e)}")
+        return False
+
+
+def invalidate_all_user_tokens(user_id: int) -> bool:
+    """Invalidate all refresh tokens for a user"""
+    try:
+        user_token_key = f"user:{user_id}:refresh_tokens"
+        tokens = redis_client.smembers(user_token_key)
+
+        # Delete each token
+        for token in tokens:
+            redis_client.delete(f"refresh_token:{token}")
+
+        # Delete the user's token set
+        redis_client.delete(user_token_key)
+        return True
+    except Exception as e:
+        print(f"Redis error: {str(e)}")
+        return False
+
+
 # ----- Security Functions -----
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    # Convert inputs to bytes if they're not already
+    if isinstance(plain_password, str):
+        password_bytes = plain_password.encode('utf-8')
+    else:
+        password_bytes = plain_password
+
+    if isinstance(hashed_password, str):
+        hashed_bytes = hashed_password.encode('utf-8')
+    else:
+        hashed_bytes = hashed_password
+
+    # Verify the password
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 
 def get_password_hash(password):
-    return pwd_context.hash(password)
+    # Convert password to bytes if it's not already
+    if isinstance(password, str):
+        password_bytes = password.encode('utf-8')
+    else:
+        password_bytes = password
+
+    # Generate a salt and hash the password
+    salt = bcrypt.gensalt()
+    hashed_password = bcrypt.hashpw(password_bytes, salt)
+
+    # Return the hashed password as a string
+    return hashed_password.decode('utf-8')
 
 
 def authenticate_user(db: Session, username: str, password: str):
@@ -150,6 +268,20 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, token_settings.secret_key, algorithm=token_settings.algorithm)
     return encoded_jwt
+
+
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    to_encode.update({"token_type": "refresh"})
+
+    if expires_delta:
+        expire = datetime.now(UTC) + expires_delta
+    else:
+        expire = datetime.now(UTC) + timedelta(days=7)  # Default 7 days
+
+    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
+    encoded_jwt = jwt.encode(to_encode, token_settings.secret_key, algorithm=token_settings.algorithm)
+    return encoded_jwt, expire
 
 
 async def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
@@ -265,11 +397,154 @@ async def login_for_access_token(
     db.add(login_record)
     db.commit()
 
+    # Create access token
     access_token_expires = timedelta(minutes=token_settings.token_expires_minutes)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    # Create refresh token
+    refresh_token_expires = timedelta(days=7)  # 7 days
+    refresh_token, expire_time = create_refresh_token(
+        data={"sub": user.username},
+        expires_delta=refresh_token_expires
+    )
+
+    # Store refresh token in Redis
+    token_expires_seconds = int(refresh_token_expires.total_seconds())
+    store_refresh_token(user.id, refresh_token, token_expires_seconds)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
+
+
+@app.post("/refresh", response_model=Token)
+async def refresh_access_token(
+        refresh_token: str,
+        db: Session = Depends(get_db)
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    # Check if token is blacklisted
+    if is_token_blacklisted(refresh_token):
+        raise credentials_exception
+
+    try:
+        # Decode token to validate it
+        payload = jwt.decode(refresh_token, token_settings.secret_key, algorithms=[token_settings.algorithm])
+        username = payload.get("sub")
+        token_type = payload.get("token_type")
+
+        # Ensure it's a refresh token
+        if token_type != "refresh":
+            raise credentials_exception
+
+        # Get user from database
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            raise credentials_exception
+
+        # Validate token exists in Redis
+        user_id = validate_refresh_token(refresh_token)
+        if user_id is None or user_id != user.id:
+            raise credentials_exception
+
+        # Invalidate the used refresh token (one-time use)
+        invalidate_refresh_token(refresh_token)
+
+        # Create new access token
+        access_token_expires = timedelta(minutes=token_settings.token_expires_minutes)
+        new_access_token = create_access_token(
+            data={"sub": username},
+            expires_delta=access_token_expires
+        )
+
+        # Create new refresh token
+        refresh_token_expires = timedelta(days=7)
+        new_refresh_token, expire_time = create_refresh_token(
+            data={"sub": username},
+            expires_delta=refresh_token_expires
+        )
+
+        # Store new refresh token
+        token_expires_seconds = int(refresh_token_expires.total_seconds())
+        store_refresh_token(user.id, new_refresh_token, token_expires_seconds)
+
+        return {
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer"
+        }
+
+    except JWTError:
+        raise credentials_exception
+
+
+@app.post("/logout")
+async def logout(
+        refresh_token: str = None,
+        current_user: User = Depends(get_current_user)
+):
+    # Add current access token to blacklist
+    token = None
+    for auth in request.headers.getall("Authorization", []):
+        if auth.startswith("Bearer "):
+            token = auth[7:]  # Remove "Bearer " prefix
+
+    if token:
+        # Get token expiration time
+        try:
+            payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm],
+                                 options={"verify_exp": False})
+            exp = payload.get("exp")
+            if exp:
+                # Calculate remaining time in seconds
+                remaining = exp - datetime.now(UTC).timestamp()
+                if remaining > 0:
+                    add_to_blacklist(token, int(remaining))
+        except Exception as e:
+            print(f"Error blacklisting token: {str(e)}")
+
+    # Invalidate refresh token if provided
+    if refresh_token:
+        invalidate_refresh_token(refresh_token)
+
+    return {"detail": "Successfully logged out"}
+
+
+@app.post("/logout-all")
+async def logout_all_devices(
+        current_user: User = Depends(get_current_user)
+):
+    # Blacklist current access token
+    token = None
+    for auth in request.headers.getall("Authorization", []):
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+
+    if token:
+        try:
+            payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm],
+                                 options={"verify_exp": False})
+            exp = payload.get("exp")
+            if exp:
+                remaining = exp - datetime.now(UTC).timestamp()
+                if remaining > 0:
+                    add_to_blacklist(token, int(remaining))
+        except Exception as e:
+            print(f"Error blacklisting token: {str(e)}")
+
+    # Invalidate all refresh tokens for user
+    invalidate_all_user_tokens(current_user.id)
+
+    return {"detail": "Successfully logged out from all devices"}
 
 
 @app.post("/validate-token")
@@ -279,13 +554,31 @@ async def validate_token(token: str = Depends(oauth2_scheme)):
     This endpoint accepts the token via the Authorization header.
     Returns the username if valid, otherwise throws an authentication error.
     """
+    # Check if token is blacklisted
+    if is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     try:
         payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm])
         username: str = payload.get("sub")
+        token_type: str = payload.get("token_type")
+
         if username is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Ensure we're using an access token
+        if token_type != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
