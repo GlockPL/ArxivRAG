@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { EventSource } from 'eventsource'
 import axios from 'axios'
 
 const API_BASE_URL = 'http://localhost:8000'
@@ -218,6 +219,7 @@ export const useChatStore = defineStore('chat', {
 
             this.activeChat.messages.push(userMessage)
 
+            // Create a new reactive message object
             const aiMessage = {
                 content: "<div class='thinking'><div class='dot-spinner'></div><span>Thinking...</span></div>",
                 type: 'ai',
@@ -235,87 +237,142 @@ export const useChatStore = defineStore('chat', {
                     const encodedQuery = encodeURIComponent(messageText)
                     const streamUrl = `${API_BASE_URL}/conversations/${this.activeChat.id}/stream?query=${encodedQuery}`
 
-                    const response = await fetch(streamUrl, {
-                        method: 'GET',
-                        headers: {
-                            'Authorization': `Bearer ${useAuthStore().authToken}`,
-                            'Accept': 'text/event-stream',
-                            'Cache-Control': 'no-cache'
+                    // Create EventSource with custom headers using the fetch option
+                    const es = new EventSource(streamUrl, {
+                        fetch: (input, init) =>
+                            fetch(input, {
+                                ...init,
+                                headers: {
+                                    ...init.headers,
+                                    'Authorization': `Bearer ${useAuthStore().authToken}`,
+                                    'Accept': 'text/event-stream',
+                                    'Cache-Control': 'no-cache'
+                                }
+                            })
+                    })
+
+                    let isFirstChunk = true
+                    let currentActiveChatId = this.activeChat.id
+
+                    // Store a reference to the message index for faster lookups
+                    const messageIndex = this.activeChat.messages.length - 1
+
+                    // Monitor for chat ID changes
+                    const checkForChatChange = () => {
+                        if (this.activeChatId !== currentActiveChatId) {
+                            console.log('Chat changed - cleaning up stream')
+                            cleanup()
+                            return true
+                        }
+                        return false
+                    }
+
+                    // Handle incoming messages
+                    es.addEventListener('message', (event) => {
+                        // Check if chat has changed
+                        if (checkForChatChange()) return
+
+                        const data = event.data
+
+                        if (data === '[DONE]') {
+                            // Update just the isStreaming property
+                            if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
+                                this.activeChat.messages[messageIndex].isStreaming = false
+                            }
+
+                            es.close()
+                            this.isSending = false
+                            return
+                        }
+
+                        let content;
+                        try {
+                            content = JSON.parse(data);
+                        } catch (e) {
+                            content = data;
+                        }
+
+                        console.log("Received content:", content);
+                        console.log("Content type:", typeof content);
+
+                        // Make sure we're updating the correct message
+                        if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
+                            if (isFirstChunk) {
+                                // For the first chunk, replace the entire content (remove "Thinking...")
+                                this.activeChat.messages[messageIndex].content = content
+                                this.activeChat.messages[messageIndex].rawContent = content
+                                isFirstChunk = false
+                            } else {
+                                // For subsequent chunks, append to the existing content
+                                const currentMsg = this.activeChat.messages[messageIndex]
+                                currentMsg.rawContent += content
+                                currentMsg.content = currentMsg.rawContent
+                            }
                         }
                     })
 
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! Status: ${response.status}`)
-                    }
+                    // Handle errors
+                    es.addEventListener('error', (error) => {
+                        console.error('EventSource error:', error)
 
-                    const reader = response.body.getReader()
-                    const decoder = new TextDecoder()
-                    let buffer = ''
-                    let isFirstChunk = true
-
-                    while (true) {
-                        const { done, value } = await reader.read()
-
-                        if (done) {
-                            break
+                        // Check for HTTP error codes (if available)
+                        if (error.code) {
+                            console.error(`HTTP error code: ${error.code}`)
                         }
 
-                        const chunk = decoder.decode(value, { stream: true })
-                        buffer += chunk
+                        // Update the message with error content
+                        if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
+                            const currentMsg = this.activeChat.messages[messageIndex]
 
-                        const messages = buffer.split(/\r\n\r\n|\n\n/)
-                        buffer = messages.pop() || ''
-
-                        for (const message of messages) {
-                            if (!message.trim()) continue
-
-                            const dataMatch = message.match(/^data: (.*)$/m)
-                            if (!dataMatch) continue
-
-                            const data = dataMatch[1].trim()
-
-                            if (data.includes('connection_established')) {
-                                console.log('SSE connection established')
-                                continue
-                            }
-
-                            if (data === '[DONE]') {
-                                aiMessage.isStreaming = false
-                                break
-                            }
-
-                            let content
-                            try {
-                                content = JSON.parse(data)
-                            } catch (e) {
-                                content = data
-                            }
-
-                            if (isFirstChunk) {
-                                aiMessage.rawContent = content
-                                aiMessage.content = content
-                                isFirstChunk = false
+                            if (currentMsg.isStreaming) {
+                                currentMsg.content = `Error: Connection failed. Please try again.`
                             } else {
-                                aiMessage.rawContent += content
-                                aiMessage.content = aiMessage.rawContent
+                                currentMsg.content += `\n\nError: Connection lost. Please try again.`
                             }
-                        }
-                    }
 
-                    if (aiMessage.isStreaming) {
-                        aiMessage.isStreaming = false
+                            currentMsg.isStreaming = false
+                        }
+
+                        es.close()
+                        this.isSending = false
+                    })
+
+                    // Set up a safety timeout in case the [DONE] event never arrives
+                    const timeoutId = setTimeout(() => {
+                        if (messageIndex >= 0 &&
+                            messageIndex < this.activeChat.messages.length &&
+                            this.activeChat.messages[messageIndex].isStreaming) {
+
+                            console.log('Stream timeout - closing connection')
+                            this.activeChat.messages[messageIndex].isStreaming = false
+                            es.close()
+                            this.isSending = false
+                        }
+                    }, 30000) // 30-second timeout
+
+                    // Clean up when component unmounts or stream completes
+                    const cleanup = () => {
+                        clearTimeout(timeoutId)
+                        es.close()
+                        this.isSending = false
                     }
 
                 } catch (error) {
-                    console.error('Error streaming message:', error)
+                    console.error('Error setting up message stream:', error)
 
-                    if (aiMessage.isStreaming) {
-                        aiMessage.content = `Error: ${error.message || 'Failed to load response'}. Please try again.`
-                        aiMessage.isStreaming = false
-                    } else {
-                        aiMessage.content += `\n\nError: ${error.message || 'Connection lost'}. Please try again.`
+                    // Update the message with error content
+                    if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
+                        const currentMsg = this.activeChat.messages[messageIndex]
+
+                        if (currentMsg.isStreaming) {
+                            currentMsg.content = `Error: ${error.message || 'Failed to load response'}. Please try again.`
+                        } else {
+                            currentMsg.content += `\n\nError: ${error.message || 'Connection failed'}. Please try again.`
+                        }
+
+                        currentMsg.isStreaming = false
                     }
-                } finally {
+
                     this.isSending = false
                 }
             }
