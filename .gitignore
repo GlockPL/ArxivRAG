@@ -1,2 +1,6 @@
 .env
 __pycache__
+.idea
+*.dat
+graph.png
+graph_test.png
