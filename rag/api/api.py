@@ -705,9 +705,8 @@ async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGen
             escaped_token = json.dumps(token)
             # Format as a proper SSE message
             yield f"data: {escaped_token}\n\n"
-
             # Force flush with a small delay to ensure incremental delivery
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
 
     except Exception as e:
         print(f"Error in streaming: {str(e)}")
