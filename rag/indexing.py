@@ -78,7 +78,8 @@ class ContextualIndexing:
                     total_count=True,
                     filters=source_filter,
                 )
-                responses.extend(response.groups)
+                if hasattr(response, 'groups'):
+                    responses.extend(response.groups)
 
 
             # Create a dictionary of source -> count

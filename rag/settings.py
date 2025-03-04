@@ -41,6 +41,7 @@ class TokenSettings(BaseSettings):
     secret_key: str = Field("", alias='JWT_SECRET')
     algorithm: str = Field("HS256", alias='ALGORITHM')
     token_expires_minutes: int = Field(30, alias='ACCESS_TOKEN_EXPIRE_MINUTES')
+    refresh_token_expires_days: int = Field(7, alias='REFRESH_TOKEN_EXPIRE_DAYS')
 
 class HostSettings(BaseSettings):
     host: str = Field("localhost", alias='HOST')

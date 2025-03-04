@@ -1,7 +1,6 @@
 import json
 import random
 import uuid
-from urllib import request
 
 import bcrypt
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
@@ -378,7 +377,7 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
 async def login_for_access_token(
         form_data: OAuth2PasswordRequestForm = Depends(),
         db: Session = Depends(get_db),
-        request: Request = None
+        in_request: Request = None
 ):
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
@@ -391,8 +390,8 @@ async def login_for_access_token(
     # Record login history
     login_record = LoginHistory(
         user_id=user.id,
-        ip_address=request.client.host if request else None,
-        user_agent=request.headers.get("user-agent") if request else None
+        ip_address=in_request.client.host if in_request else None,
+        user_agent=in_request.headers.get("user-agent") if in_request else None
     )
     db.add(login_record)
     db.commit()
@@ -404,7 +403,7 @@ async def login_for_access_token(
     )
 
     # Create refresh token
-    refresh_token_expires = timedelta(days=7)  # 7 days
+    refresh_token_expires = timedelta(days=token_settings.refresh_token_expires_days)
     refresh_token, expire_time = create_refresh_token(
         data={"sub": user.username},
         expires_delta=refresh_token_expires
@@ -467,7 +466,7 @@ async def refresh_access_token(
         )
 
         # Create new refresh token
-        refresh_token_expires = timedelta(days=7)
+        refresh_token_expires = timedelta(days=token_settings.refresh_token_expires_days)
         new_refresh_token, expire_time = create_refresh_token(
             data={"sub": username},
             expires_delta=refresh_token_expires
@@ -489,12 +488,12 @@ async def refresh_access_token(
 
 @app.post("/logout")
 async def logout(
+        request: Request,
         refresh_token: str = None,
-        current_user: User = Depends(get_current_user)
 ):
     # Add current access token to blacklist
     token = None
-    for auth in request.headers.getall("Authorization", []):
+    for auth in request.headers.getlist("Authorization"):
         if auth.startswith("Bearer "):
             token = auth[7:]  # Remove "Bearer " prefix
 
