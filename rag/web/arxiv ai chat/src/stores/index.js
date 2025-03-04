@@ -6,6 +6,7 @@ import { renderMarkdown } from '@/utils/markdownProcessor'
 const API_BASE_URL = 'http://localhost:8000'
 
 // Set up axios interceptors
+// Setup axios interceptors for authentication
 axios.interceptors.request.use(config => {
     const token = localStorage.getItem('chatToken')
     if (token) {
@@ -16,15 +17,94 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error)
 })
 
+// Create a flag to prevent multiple refresh attempts at once
+let isRefreshing = false
+// Store for the requests that failed due to token expiration
+let failedQueue = []
+
+// Process the failed queue
+const processQueue = (error, token = null) => {
+    failedQueue.forEach(prom => {
+        if (error) {
+            prom.reject(error)
+        } else {
+            prom.resolve(token)
+        }
+    })
+    failedQueue = []
+}
+
+// Enhanced response interceptor for token refresh
 axios.interceptors.response.use(response => {
     return response
-}, error => {
-    if (error.response && error.response.status === 401) {
-        // Token expired or invalid
-        localStorage.removeItem('chatToken')
-        localStorage.removeItem('chatUsername')
-        window.location.href = '/login'
+}, async error => {
+    const originalRequest = error.config
+
+    // If the error is 401 and we haven't tried to refresh the token yet
+    if (error.response && error.response.status === 401 && !originalRequest._retry) {
+        if (isRefreshing) {
+            // If we're already refreshing, queue this request
+            return new Promise((resolve, reject) => {
+                failedQueue.push({ resolve, reject })
+            }).then(token => {
+                originalRequest.headers['Authorization'] = `Bearer ${token}`
+                return axios(originalRequest)
+            }).catch(err => {
+                return Promise.reject(err)
+            })
+        }
+
+        // Mark that we're trying to refresh
+        originalRequest._retry = true
+        isRefreshing = true
+
+        // Try to refresh the token
+        const refreshToken = localStorage.getItem('chatRefreshToken')
+
+        if (!refreshToken) {
+            // No refresh token available, logout
+            const authStore = useAuthStore()
+            authStore.logout()
+            processQueue(new Error('No refresh token available'))
+            isRefreshing = false
+            return Promise.reject(error)
+        }
+
+        try {
+            // Call the refresh token endpoint
+            const response = await axios.post(`${API_BASE_URL}/refresh`, { refresh_token: refreshToken })
+
+            // Update tokens in localStorage
+            const { access_token, refresh_token } = response.data
+            localStorage.setItem('chatToken', access_token)
+            localStorage.setItem('chatRefreshToken', refresh_token)
+
+            // Update auth headers for the original request
+            originalRequest.headers['Authorization'] = `Bearer ${access_token}`
+
+            // Process any queued requests
+            processQueue(null, access_token)
+
+            // Reset refreshing flag
+            isRefreshing = false
+
+            // Retry the original request
+            return axios(originalRequest)
+        } catch (refreshError) {
+            // Refresh token failed, logout
+            const authStore = useAuthStore()
+            authStore.logout()
+
+            // Process queued requests with the error
+            processQueue(refreshError)
+
+            // Reset refreshing flag
+            isRefreshing = false
+
+            return Promise.reject(refreshError)
+        }
     }
+
     return Promise.reject(error)
 })
 
@@ -33,6 +113,7 @@ export const useAuthStore = defineStore('auth', {
         isAuthenticated: localStorage.getItem('chatToken') !== null,
         username: localStorage.getItem('chatUsername') || '',
         authToken: localStorage.getItem('chatToken') || '',
+        refreshToken: localStorage.getItem('chatRefreshToken') || '',
         isLoggingIn: false,
         loginError: ''
     }),
@@ -54,10 +135,12 @@ export const useAuthStore = defineStore('auth', {
                 })
 
                 this.authToken = response.data.access_token
+                this.refreshToken = response.data.refresh_token
                 this.username = username
                 this.isAuthenticated = true
 
                 localStorage.setItem('chatToken', this.authToken)
+                localStorage.setItem('chatRefreshToken', this.refreshToken)
                 localStorage.setItem('chatUsername', this.username)
 
                 return true
@@ -76,19 +159,71 @@ export const useAuthStore = defineStore('auth', {
             }
         },
 
-        logout() {
-            this.isAuthenticated = false
-            this.username = ''
-            this.authToken = ''
+        async logout() {
+            try {
+                // Call the logout endpoint if the user is authenticated
+                if (this.isAuthenticated && this.refreshToken) {
+                    await axios.post(`${API_BASE_URL}/logout`, {
+                        refresh_token: this.refreshToken
+                    })
+                }
+            } catch (error) {
+                console.error('Logout error:', error)
+            } finally {
+                // Always clear local state regardless of API call success
+                this.isAuthenticated = false
+                this.username = ''
+                this.authToken = ''
+                this.refreshToken = ''
 
-            localStorage.removeItem('chatToken')
-            localStorage.removeItem('chatUsername')
+                localStorage.removeItem('chatToken')
+                localStorage.removeItem('chatRefreshToken')
+                localStorage.removeItem('chatUsername')
+
+                // Redirect to login page
+                window.location.href = '/login'
+            }
+        },
+
+        // Method to manually refresh the token
+        async refreshAccessToken() {
+            if (!this.refreshToken) {
+                throw new Error('No refresh token available')
+            }
+
+            try {
+                const response = await axios.post(`${API_BASE_URL}/refresh`, {
+                    refresh_token: this.refreshToken
+                })
+
+                this.authToken = response.data.access_token
+                this.refreshToken = response.data.refresh_token
+
+                localStorage.setItem('chatToken', this.authToken)
+                localStorage.setItem('chatRefreshToken', this.refreshToken)
+
+                return true
+            } catch (error) {
+                console.error('Token refresh error:', error)
+                this.logout()
+                return false
+            }
         }
     },
 
     getters: {
         userInitial: (state) => {
             return state.username ? state.username.charAt(0).toUpperCase() : ''
+        },
+
+        isTokenValid: () => {
+            const token = localStorage.getItem('chatToken')
+            if (!token) return false
+
+            // Optional: Add JWT decode and expiration check here
+            // This would require a jwt-decode library
+
+            return true
         }
     }
 })
@@ -209,17 +344,17 @@ export const useChatStore = defineStore('chat', {
 
         async sendMessage(messageText) {
             if (!messageText.trim() || !this.activeChat) return
-        
+
             this.newMessage = ""
-        
+
             const userMessage = {
                 content: messageText,
                 type: 'human',
                 thread_id: this.activeChat.id
             }
-        
+
             this.activeChat.messages.push(userMessage)
-        
+
             // Create a new reactive message object
             const aiMessage = {
                 content: "<div class='thinking'><div class='dot-spinner'></div><span>Thinking...</span></div>",
@@ -228,16 +363,16 @@ export const useChatStore = defineStore('chat', {
                 isStreaming: true,
                 rawContent: ""
             }
-        
+
             this.activeChat.messages.push(aiMessage)
-        
+
             if (!this.activeChat.id.startsWith('temp-')) {
                 this.isSending = true
-        
+
                 try {
                     const encodedQuery = encodeURIComponent(messageText)
                     const streamUrl = `${API_BASE_URL}/conversations/${this.activeChat.id}/stream?query=${encodedQuery}`
-        
+
                     // Create EventSource with custom headers using the fetch option
                     const es = new EventSource(streamUrl, {
                         fetch: (input, init) =>
@@ -251,13 +386,13 @@ export const useChatStore = defineStore('chat', {
                                 }
                             })
                     })
-        
+
                     let isFirstChunk = true
                     let currentActiveChatId = this.activeChat.id
-                    
+
                     // Store a reference to the message index for faster lookups
                     const messageIndex = this.activeChat.messages.length - 1
-        
+
                     // Monitor for chat ID changes
                     const checkForChatChange = () => {
                         if (this.activeChatId !== currentActiveChatId) {
@@ -267,7 +402,7 @@ export const useChatStore = defineStore('chat', {
                         }
                         return false
                     }
-        
+
                     // Process content to ensure it's a string and handle potential JSON objects
                     const processContent = (content) => {
                         if (typeof content === 'object') {
@@ -279,53 +414,53 @@ export const useChatStore = defineStore('chat', {
                         }
                         return content; // Already a string
                     };
-        
+
                     // Process markdown on each update if needed
                     const processMarkdown = (text) => {
                         // If your app has a markdown processor, call it here
                         // For example: return markdownProcessor.render(text);
-                        return text;
+                        return renderMarkdown(text);
                     };
-        
+
                     // Handle incoming messages
                     es.addEventListener('message', (event) => {
                         // Check if chat has changed
                         if (checkForChatChange()) return
-        
+
                         const data = event.data
-        
+
                         if (data === '[DONE]') {
                             // Update just the isStreaming property
                             if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
                                 this.activeChat.messages[messageIndex].isStreaming = false
                             }
-                            
+
                             es.close()
                             this.isSending = false
                             return
                         }
-        
+
                         // Process the incoming data
                         let content;
                         let parsedData = null;
-                        
+
                         try {
                             parsedData = JSON.parse(data);
-                            
+
                             // Check if this is a connection establishment message
-                            if (parsedData && 
-                                typeof parsedData === 'object' && 
+                            if (parsedData &&
+                                typeof parsedData === 'object' &&
                                 parsedData.type === 'connection_established') {
                                 console.log("Discarding connection establishment message");
                                 return; // Skip this message and wait for actual content
                             }
-                            
+
                             content = processContent(parsedData);
                         } catch (e) {
                             console.log("Raw content (non-JSON):", data);
                             content = data; // Already a string
                         }
-                        
+
                         // Make sure we're updating the correct message
                         if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
                             if (isFirstChunk) {
@@ -337,76 +472,76 @@ export const useChatStore = defineStore('chat', {
                                 // For subsequent chunks, append to the existing content
                                 const currentMsg = this.activeChat.messages[messageIndex];
                                 currentMsg.rawContent += content;
-                                
+
                                 // Process markdown on each update for real-time rendering
                                 currentMsg.content = processMarkdown(currentMsg.rawContent);
                             }
                         }
                     })
-        
+
                     // Handle errors
                     es.addEventListener('error', (error) => {
                         console.error('EventSource error:', error)
-        
+
                         // Check for HTTP error codes (if available)
                         if (error.code) {
                             console.error(`HTTP error code: ${error.code}`)
                         }
-        
+
                         // Update the message with error content
                         if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
                             const currentMsg = this.activeChat.messages[messageIndex]
-                            
+
                             if (currentMsg.isStreaming) {
                                 currentMsg.content = `Error: Connection failed. Please try again.`
                             } else {
                                 currentMsg.content += `\n\nError: Connection lost. Please try again.`
                             }
-                            
+
                             currentMsg.isStreaming = false
                         }
-        
+
                         es.close()
                         this.isSending = false
                     })
-        
+
                     // Set up a safety timeout in case the [DONE] event never arrives
                     const timeoutId = setTimeout(() => {
-                        if (messageIndex >= 0 && 
-                            messageIndex < this.activeChat.messages.length && 
+                        if (messageIndex >= 0 &&
+                            messageIndex < this.activeChat.messages.length &&
                             this.activeChat.messages[messageIndex].isStreaming) {
-                            
+
                             console.log('Stream timeout - closing connection')
                             this.activeChat.messages[messageIndex].isStreaming = false
                             es.close()
                             this.isSending = false
                         }
                     }, 30000) // 30-second timeout
-        
+
                     // Clean up when component unmounts or stream completes
                     const cleanup = () => {
                         clearTimeout(timeoutId)
                         es.close()
                         this.isSending = false
                     }
-        
+
                 } catch (error) {
                     console.error('Error setting up message stream:', error)
-        
+
                     // Update the message with error content
                     const messageIndex = this.activeChat.messages.length - 1;
                     if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
                         const currentMsg = this.activeChat.messages[messageIndex]
-                        
+
                         if (currentMsg.isStreaming) {
                             currentMsg.content = `Error: ${error.message || 'Failed to load response'}. Please try again.`
                         } else {
                             currentMsg.content += `\n\nError: ${error.message || 'Connection failed'}. Please try again.`
                         }
-                        
+
                         currentMsg.isStreaming = false
                     }
-        
+
                     this.isSending = false
                 }
             }

@@ -12,7 +12,6 @@ from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import List, Optional, Dict, AsyncGenerator
 from datetime import datetime, timedelta, UTC
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 import asyncio
 import redis
 from sqlalchemy.orm import Session
@@ -40,9 +39,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create tables if they don't exist
 Base.metadata.create_all(bind=engine)
-
-# Password hashing
-# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -132,6 +128,8 @@ class ChatSummary(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 # In-memory message queue for streaming
 user_message_queues: Dict[int, asyncio.Queue] = {}
@@ -422,7 +420,7 @@ async def login_for_access_token(
 
 @app.post("/refresh", response_model=Token)
 async def refresh_access_token(
-        refresh_token: str,
+        refresh_data: RefreshRequest,
         db: Session = Depends(get_db)
 ):
     credentials_exception = HTTPException(
@@ -430,6 +428,8 @@ async def refresh_access_token(
         detail="Invalid refresh token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    refresh_token = refresh_data.refresh_token
 
     # Check if token is blacklisted
     if is_token_blacklisted(refresh_token):
@@ -486,45 +486,10 @@ async def refresh_access_token(
         raise credentials_exception
 
 
-@app.post("/logout")
-async def logout(
-        request: Request,
-        refresh_token: str = None,
-):
-    # Add current access token to blacklist
-    token = None
-    for auth in request.headers.getlist("Authorization"):
-        if auth.startswith("Bearer "):
-            token = auth[7:]  # Remove "Bearer " prefix
-
-    if token:
-        # Get token expiration time
-        try:
-            payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm],
-                                 options={"verify_exp": False})
-            exp = payload.get("exp")
-            if exp:
-                # Calculate remaining time in seconds
-                remaining = exp - datetime.now(UTC).timestamp()
-                if remaining > 0:
-                    add_to_blacklist(token, int(remaining))
-        except Exception as e:
-            print(f"Error blacklisting token: {str(e)}")
-
-    # Invalidate refresh token if provided
-    if refresh_token:
-        invalidate_refresh_token(refresh_token)
-
-    return {"detail": "Successfully logged out"}
-
-
-@app.post("/logout-all")
-async def logout_all_devices(
-        current_user: User = Depends(get_current_user)
-):
+def logout_operation(request: Request):
     # Blacklist current access token
     token = None
-    for auth in request.headers.getall("Authorization", []):
+    for auth in request.headers.getlist("Authorization"):
         if auth.startswith("Bearer "):
             token = auth[7:]
 
@@ -540,6 +505,27 @@ async def logout_all_devices(
         except Exception as e:
             print(f"Error blacklisting token: {str(e)}")
 
+
+@app.post("/logout")
+async def logout(
+        request: Request,
+        refresh_token: str = None,
+):
+    logout_operation(request)
+
+    # Invalidate refresh token if provided
+    if refresh_token:
+        invalidate_refresh_token(refresh_token)
+
+    return {"detail": "Successfully logged out"}
+
+
+@app.post("/logout-all")
+async def logout_all_devices(
+        request: Request,
+        current_user: User = Depends(get_current_user)
+):
+    logout_operation(request)
     # Invalidate all refresh tokens for user
     invalidate_all_user_tokens(current_user.id)
 

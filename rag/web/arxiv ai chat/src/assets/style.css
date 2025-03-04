@@ -773,3 +773,104 @@ body, html {
         transform: rotate(360deg);
     }
 }
+
+/* Add these styles to your CSS file to improve code block rendering */
+
+/* Base styles for code blocks */
+pre {
+    background-color: #f6f8fa;
+    border-radius: 6px;
+    padding: 16px;
+    overflow: auto;
+    margin-bottom: 16px;
+    white-space: pre;
+    word-wrap: normal;
+  }
+  
+  /* Style for code inside pre tags */
+  pre code {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    overflow-wrap: normal;
+    white-space: pre;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    font-size: 14px;
+    line-height: 1.45;
+    tab-size: 4;
+    hyphens: none;
+    border: 0;
+  }
+  
+  /* Make sure line breaks in code blocks are preserved */
+  pre code .hljs {
+    display: block;
+    white-space: pre;
+    overflow-x: auto;
+    padding: 0;
+  }
+  
+  /* Fix for inline code */
+  code:not([class*="hljs"]) {
+    background-color: rgba(175, 184, 193, 0.2);
+    border-radius: 3px;
+    padding: 0.2em 0.4em;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    font-size: 85%;
+  }
+  
+  /* Make sure lists render properly */
+  .markdown-content ul,
+  .markdown-content ol {
+    padding-left: 2em;
+    margin-bottom: 16px;
+  }
+  
+  .markdown-content li {
+    margin-bottom: 0.25em;
+  }
+  
+  /* Language tag display (optional) */
+  pre::before {
+    content: attr(data-language);
+    display: block;
+    background-color: #e1e4e8;
+    color: #24292e;
+    font-size: 85%;
+    padding: 4px 16px;
+    margin: -16px -16px 16px -16px;
+    border-radius: 6px 6px 0 0;
+    font-family: sans-serif;
+  }
+  
+  /* Only display language tag if attribute is present */
+  pre:not([data-language])::before {
+    display: none;
+  }
+
+  :deep(.markdown-content pre) {
+    white-space: pre;
+    overflow-x: auto;
+    background-color: #f6f8fa;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+:deep(.markdown-content code) {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+:deep(.markdown-content ul),
+:deep(.markdown-content ol) {
+    padding-left: 2em;
+    margin-bottom: 16px;
+}
+
+:deep(.markdown-content li) {
+    margin-bottom: 0.25em;
+}
+
+:deep(.markdown-content p) {
+    margin-bottom: 16px;
+}
