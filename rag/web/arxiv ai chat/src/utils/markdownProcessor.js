@@ -109,7 +109,6 @@ export function renderMarkdown(text) {
     return `\n\`\`\`${lang}\n${code}\n\`\`\`\n`;
   });
   let parsedText = marked.parse(processedText);
-  console.log(`Parsed Markdown: ${parsedText}`)
   // Parse and return the markdown
   return parsedText
 }

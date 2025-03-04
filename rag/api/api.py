@@ -1,4 +1,5 @@
 import json
+import logging
 import random
 import uuid
 
@@ -314,6 +315,7 @@ def get_user_conversation_count(db: Session, user_id: int):
 
 
 def get_one_conversation(db: Session, thread_id: str):
+    logging.info(f"get_one_conversation: {thread_id}")
     return db.query(ConversationTitle).filter(ConversationTitle.thread_id == thread_id).first()
 
 
@@ -630,6 +632,74 @@ async def list_conversations(
 
     return convos
 
+async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGenerator[str, None]:
+    try:
+        # Send an initial event to establish the connection
+        yield "data: {\"type\": \"connection_established\"}\n\n"
+
+        # Stream content from RAG
+        for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
+            # Ensure the token is properly JSON escaped
+            escaped_token = json.dumps(token)
+            # Format as a proper SSE message
+            yield f"data: {escaped_token}\n\n"
+            # Force flush with a small delay to ensure incremental delivery
+            await asyncio.sleep(0.1)
+
+    except Exception as e:
+        print(f"Error in streaming: {str(e)}")
+        error_msg = json.dumps({"error": str(e)})
+        yield f"data: {error_msg}\n\n"
+
+    # Send an end message
+    yield "data: [DONE]\n\n"
+
+def generate_unique_thread_id(db: Session) -> str:
+    new_thread_id = generate_thread_id()
+    while True:
+        # Check if conversation exists
+        convo = get_one_conversation(db, new_thread_id)
+        if not convo:
+            return new_thread_id
+        new_thread_id = generate_thread_id()
+
+@app.get("/conversations/stream")
+async def stream_messages(
+        query: str,
+        thread_id: str = None,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    logging.info(f"I'm in conversation {thread_id}")
+    # Check if thread_id exists in database
+    if thread_id:
+        convo = get_one_conversation(db, thread_id)
+        if not convo:
+            # Thread ID was provided but doesn't exist, generate a new one
+            thread_id = generate_unique_thread_id(db)
+        elif convo.user_id != current_user.id:
+            # Thread exists but belongs to another user
+            raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+    else:
+        # No thread_id provided, generate a new one
+        thread_id = generate_unique_thread_id(db)
+
+    # Set response headers
+    headers = {
+        "X-Thread-ID": thread_id,
+        "Access-Control-Expose-Headers": "X-Thread-ID",
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+    }
+
+    # Return a StreamingResponse
+    return StreamingResponse(
+        stream_generator(query, thread_id, current_user.id),
+        media_type="text/event-stream",
+        headers=headers
+    )
+
 
 @app.get("/conversations/{thread_id}", response_model=ConversationResponse)
 async def get_conversation(
@@ -639,6 +709,7 @@ async def get_conversation(
 ):
     # Check if conversation exists and user has access
     convo = get_one_conversation(db, thread_id)
+    logging.info(f"I'm in conversation {thread_id}")
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -679,85 +750,6 @@ def generate_thread_id() -> str:
     return f"id_{new_thread_id}_{random.randint(0, 100000)}"
 
 
-async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGenerator[str, None]:
-    try:
-        # Send an initial event to establish the connection
-        yield "data: {\"type\": \"connection_established\"}\n\n"
-
-        # Stream content from RAG
-        for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
-            # Ensure the token is properly JSON escaped
-            escaped_token = json.dumps(token)
-            # Format as a proper SSE message
-            yield f"data: {escaped_token}\n\n"
-            # Force flush with a small delay to ensure incremental delivery
-            await asyncio.sleep(0.1)
-
-    except Exception as e:
-        print(f"Error in streaming: {str(e)}")
-        error_msg = json.dumps({"error": str(e)})
-        yield f"data: {error_msg}\n\n"
-
-    # Send an end message
-    yield "data: [DONE]\n\n"
-
-
-@app.get("/conversations/new/stream")
-async def stream_new_messages(
-        query: str,
-        current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
-):
-    non_original = True
-    new_thread_id = generate_thread_id()
-    while non_original:
-        # Check if conversation exists and user has access
-        convo = get_one_conversation(db, new_thread_id)
-        if not convo:
-            non_original = False
-        else:
-            new_thread_id = generate_thread_id()
-
-    # Create response headers with the thread ID
-    headers = {
-        "X-Thread-ID": new_thread_id,
-        "Access-Control-Expose-Headers": "X-Thread-ID",
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-    }
-
-    # Return a StreamingResponse with proper SSE media type and headers
-    return StreamingResponse(
-        stream_generator(query, new_thread_id, current_user.id),
-        media_type="text/event-stream",
-        headers=headers
-    )
-
-
-@app.get("/conversations/{thread_id}/stream")
-async def stream_messages(
-        query: str,
-        thread_id: str,
-        current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
-):
-    # Check if conversation exists and user has access
-    convo = get_one_conversation(db, thread_id)
-    if convo:
-        if convo.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
-
-    # Return a StreamingResponse with proper SSE configuration
-    return StreamingResponse(
-        stream_generator(query, thread_id, current_user.id),
-        media_type="text/event-stream",
-        headers={
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        }
-    )
 
 
 @app.put("/conversations/{thread_id}", response_model=ConversationResponse)

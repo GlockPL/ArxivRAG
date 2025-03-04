@@ -314,9 +314,7 @@ export const useChatStore = defineStore('chat', {
 
         async createNewChat() {
             try {
-                const response = await axios.post(`${API_BASE_URL}/conversations`, { title: "New Chat" })
-
-                const newChatId = response.data.thread_id
+                const newChatId = 'temp-id'
                 const newChat = {
                     id: newChatId,
                     name: `New Chat`,
@@ -366,185 +364,185 @@ export const useChatStore = defineStore('chat', {
 
             this.activeChat.messages.push(aiMessage)
 
-            if (!this.activeChat.id.startsWith('temp-')) {
-                this.isSending = true
 
-                try {
-                    const encodedQuery = encodeURIComponent(messageText)
-                    const streamUrl = `${API_BASE_URL}/conversations/${this.activeChat.id}/stream?query=${encodedQuery}`
+            this.isSending = true
 
-                    // Create EventSource with custom headers using the fetch option
-                    const es = new EventSource(streamUrl, {
-                        fetch: (input, init) =>
-                            fetch(input, {
-                                ...init,
-                                headers: {
-                                    ...init.headers,
-                                    'Authorization': `Bearer ${useAuthStore().authToken}`,
-                                    'Accept': 'text/event-stream',
-                                    'Cache-Control': 'no-cache'
-                                }
-                            })
-                    })
+            try {
+                const encodedQuery = encodeURIComponent(messageText)
+                const streamUrl = `${API_BASE_URL}/conversations/stream?query=${encodedQuery}&thread_id=${this.activeChat.id}`
 
-                    let isFirstChunk = true
-                    let currentActiveChatId = this.activeChat.id
+                // Create EventSource with custom headers using the fetch option
+                const es = new EventSource(streamUrl, {
+                    fetch: (input, init) =>
+                        fetch(input, {
+                            ...init,
+                            headers: {
+                                ...init.headers,
+                                'Authorization': `Bearer ${useAuthStore().authToken}`,
+                                'Accept': 'text/event-stream',
+                                'Cache-Control': 'no-cache'
+                            }
+                        })
+                })
 
-                    // Store a reference to the message index for faster lookups
-                    const messageIndex = this.activeChat.messages.length - 1
+                let isFirstChunk = true
+                let currentActiveChatId = this.activeChat.id
 
-                    // Monitor for chat ID changes
-                    const checkForChatChange = () => {
-                        if (this.activeChatId !== currentActiveChatId) {
-                            console.log('Chat changed - cleaning up stream')
-                            cleanup()
-                            return true
-                        }
-                        return false
+                // Store a reference to the message index for faster lookups
+                const messageIndex = this.activeChat.messages.length - 1
+
+                // Monitor for chat ID changes
+                const checkForChatChange = () => {
+                    if (this.activeChatId !== currentActiveChatId) {
+                        console.log('Chat changed - cleaning up stream')
+                        cleanup()
+                        return true
                     }
+                    return false
+                }
 
-                    // Process content to ensure it's a string and handle potential JSON objects
-                    const processContent = (content) => {
-                        if (typeof content === 'object') {
-                            try {
-                                return JSON.stringify(content); // Convert object to string
-                            } catch (e) {
-                                return String(content); // Fallback to string conversion
-                            }
-                        }
-                        return content; // Already a string
-                    };
-
-                    // Process markdown on each update if needed
-                    const processMarkdown = (text) => {
-                        // If your app has a markdown processor, call it here
-                        // For example: return markdownProcessor.render(text);
-                        return renderMarkdown(text);
-                    };
-
-                    // Handle incoming messages
-                    es.addEventListener('message', (event) => {
-                        // Check if chat has changed
-                        if (checkForChatChange()) return
-
-                        const data = event.data
-
-                        if (data === '[DONE]') {
-                            // Update just the isStreaming property
-                            if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                                this.activeChat.messages[messageIndex].isStreaming = false
-                            }
-
-                            es.close()
-                            this.isSending = false
-                            return
-                        }
-
-                        // Process the incoming data
-                        let content;
-                        let parsedData = null;
-
+                // Process content to ensure it's a string and handle potential JSON objects
+                const processContent = (content) => {
+                    if (typeof content === 'object') {
                         try {
-                            parsedData = JSON.parse(data);
-
-                            // Check if this is a connection establishment message
-                            if (parsedData &&
-                                typeof parsedData === 'object' &&
-                                parsedData.type === 'connection_established') {
-                                console.log("Discarding connection establishment message");
-                                return; // Skip this message and wait for actual content
-                            }
-
-                            content = processContent(parsedData);
+                            return JSON.stringify(content); // Convert object to string
                         } catch (e) {
-                            console.log("Raw content (non-JSON):", data);
-                            content = data; // Already a string
+                            return String(content); // Fallback to string conversion
                         }
+                    }
+                    return content; // Already a string
+                };
 
-                        // Make sure we're updating the correct message
+                // Process markdown on each update if needed
+                const processMarkdown = (text) => {
+                    // If your app has a markdown processor, call it here
+                    // For example: return markdownProcessor.render(text);
+                    return renderMarkdown(text);
+                };
+
+                // Handle incoming messages
+                es.addEventListener('message', (event) => {
+                    // Check if chat has changed
+                    if (checkForChatChange()) return
+
+                    const data = event.data
+
+                    if (data === '[DONE]') {
+                        // Update just the isStreaming property
                         if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                            if (isFirstChunk) {
-                                // For the first chunk, replace the entire content (remove "Thinking...")
-                                this.activeChat.messages[messageIndex].rawContent = content;
-                                this.activeChat.messages[messageIndex].content = processMarkdown(content);
-                                isFirstChunk = false;
-                            } else {
-                                // For subsequent chunks, append to the existing content
-                                const currentMsg = this.activeChat.messages[messageIndex];
-                                currentMsg.rawContent += content;
-
-                                // Process markdown on each update for real-time rendering
-                                currentMsg.content = processMarkdown(currentMsg.rawContent);
-                            }
-                        }
-                    })
-
-                    // Handle errors
-                    es.addEventListener('error', (error) => {
-                        console.error('EventSource error:', error)
-
-                        // Check for HTTP error codes (if available)
-                        if (error.code) {
-                            console.error(`HTTP error code: ${error.code}`)
-                        }
-
-                        // Update the message with error content
-                        if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                            const currentMsg = this.activeChat.messages[messageIndex]
-
-                            if (currentMsg.isStreaming) {
-                                currentMsg.content = `Error: Connection failed. Please try again.`
-                            } else {
-                                currentMsg.content += `\n\nError: Connection lost. Please try again.`
-                            }
-
-                            currentMsg.isStreaming = false
-                        }
-
-                        es.close()
-                        this.isSending = false
-                    })
-
-                    // Set up a safety timeout in case the [DONE] event never arrives
-                    const timeoutId = setTimeout(() => {
-                        if (messageIndex >= 0 &&
-                            messageIndex < this.activeChat.messages.length &&
-                            this.activeChat.messages[messageIndex].isStreaming) {
-
-                            console.log('Stream timeout - closing connection')
                             this.activeChat.messages[messageIndex].isStreaming = false
-                            es.close()
-                            this.isSending = false
                         }
-                    }, 30000) // 30-second timeout
 
-                    // Clean up when component unmounts or stream completes
-                    const cleanup = () => {
-                        clearTimeout(timeoutId)
                         es.close()
                         this.isSending = false
+                        return
                     }
 
-                } catch (error) {
-                    console.error('Error setting up message stream:', error)
+                    // Process the incoming data
+                    let content;
+                    let parsedData = null;
+
+                    try {
+                        parsedData = JSON.parse(data);
+
+                        // Check if this is a connection establishment message
+                        if (parsedData &&
+                            typeof parsedData === 'object' &&
+                            parsedData.type === 'connection_established') {
+                            console.log("Discarding connection establishment message");
+                            return; // Skip this message and wait for actual content
+                        }
+
+                        content = processContent(parsedData);
+                    } catch (e) {
+                        console.log("Raw content (non-JSON):", data);
+                        content = data; // Already a string
+                    }
+
+                    // Make sure we're updating the correct message
+                    if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
+                        if (isFirstChunk) {
+                            // For the first chunk, replace the entire content (remove "Thinking...")
+                            this.activeChat.messages[messageIndex].rawContent = content;
+                            this.activeChat.messages[messageIndex].content = processMarkdown(content);
+                            isFirstChunk = false;
+                        } else {
+                            // For subsequent chunks, append to the existing content
+                            const currentMsg = this.activeChat.messages[messageIndex];
+                            currentMsg.rawContent += content;
+
+                            // Process markdown on each update for real-time rendering
+                            currentMsg.content = processMarkdown(currentMsg.rawContent);
+                        }
+                    }
+                })
+
+                // Handle errors
+                es.addEventListener('error', (error) => {
+                    console.error('EventSource error:', error)
+
+                    // Check for HTTP error codes (if available)
+                    if (error.code) {
+                        console.error(`HTTP error code: ${error.code}`)
+                    }
 
                     // Update the message with error content
-                    const messageIndex = this.activeChat.messages.length - 1;
                     if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
                         const currentMsg = this.activeChat.messages[messageIndex]
 
                         if (currentMsg.isStreaming) {
-                            currentMsg.content = `Error: ${error.message || 'Failed to load response'}. Please try again.`
+                            currentMsg.content = `Error: Connection failed. Please try again.`
                         } else {
-                            currentMsg.content += `\n\nError: ${error.message || 'Connection failed'}. Please try again.`
+                            currentMsg.content += `\n\nError: Connection lost. Please try again.`
                         }
 
                         currentMsg.isStreaming = false
                     }
 
+                    es.close()
+                    this.isSending = false
+                })
+
+                // Set up a safety timeout in case the [DONE] event never arrives
+                const timeoutId = setTimeout(() => {
+                    if (messageIndex >= 0 &&
+                        messageIndex < this.activeChat.messages.length &&
+                        this.activeChat.messages[messageIndex].isStreaming) {
+
+                        console.log('Stream timeout - closing connection')
+                        this.activeChat.messages[messageIndex].isStreaming = false
+                        es.close()
+                        this.isSending = false
+                    }
+                }, 30000) // 30-second timeout
+
+                // Clean up when component unmounts or stream completes
+                const cleanup = () => {
+                    clearTimeout(timeoutId)
+                    es.close()
                     this.isSending = false
                 }
+
+            } catch (error) {
+                console.error('Error setting up message stream:', error)
+
+                // Update the message with error content
+                const messageIndex = this.activeChat.messages.length - 1;
+                if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
+                    const currentMsg = this.activeChat.messages[messageIndex]
+
+                    if (currentMsg.isStreaming) {
+                        currentMsg.content = `Error: ${error.message || 'Failed to load response'}. Please try again.`
+                    } else {
+                        currentMsg.content += `\n\nError: ${error.message || 'Connection failed'}. Please try again.`
+                    }
+
+                    currentMsg.isStreaming = false
+                }
+
+                this.isSending = false
             }
+
         },
 
         toggleMenu(chatId) {
