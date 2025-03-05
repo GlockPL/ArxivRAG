@@ -313,6 +313,9 @@ def get_user_conversations(db: Session, user_id: int, limit: int = 12, offset: i
 def get_user_conversation_count(db: Session, user_id: int):
     return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).count()
 
+def get_user_conversation_newest(db: Session, user_id: int):
+    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
+        desc(ConversationTitle.created_at)).first()
 
 def get_one_conversation(db: Session, thread_id: str):
     logging.info(f"get_one_conversation: {thread_id}")
@@ -601,6 +604,26 @@ async def validate_token(token: str = Depends(oauth2_scheme)):
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+@app.get("/conversation/newest", response_model=ConversationResponse)
+async def get_newest_conversation(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+
+    convo = get_user_conversation_newest(db, current_user.id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if convo.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+
+    conversation = ConversationResponse(
+        thread_id=convo.thread_id,
+        title=convo.title,
+        created_at=convo.created_at,
+        user_id=current_user.id,
+    )
+    return conversation
 
 @app.get("/conversations/count", response_model=dict)
 async def count_conversations(
@@ -632,27 +655,32 @@ async def list_conversations(
 
     return convos
 
+
 async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGenerator[str, None]:
     try:
-        # Send an initial event to establish the connection
-        yield "data: {\"type\": \"connection_established\"}\n\n"
+        # Send an initial event to establish the connection and provide thread_id
+        json_ret = json.dumps({"type": "connection_established", "content": "[START}" ,"thread_id": thread_id})
+        yield f"data: {json_ret}\n\n"
 
         # Stream content from RAG
-        for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
-            # Ensure the token is properly JSON escaped
-            escaped_token = json.dumps(token)
+        for token in rag.stream(query=query, thread_id = thread_id, user_id = user_id):
+            # Add thread_id to each token message
+            message_data = {"type": "message", "content": token, "thread_id": thread_id}
+            # Ensure the message is properly JSON escaped
+            escaped_message = json.dumps(message_data)
             # Format as a proper SSE message
-            yield f"data: {escaped_token}\n\n"
+            yield f"data: {escaped_message}\n\n"
             # Force flush with a small delay to ensure incremental delivery
             await asyncio.sleep(0.1)
 
     except Exception as e:
         print(f"Error in streaming: {str(e)}")
-        error_msg = json.dumps({"error": str(e)})
+        error_msg = json.dumps({"type": "error", "content": str(e), "thread_id": thread_id})
         yield f"data: {error_msg}\n\n"
 
-    # Send an end message
-    yield "data: [DONE]\n\n"
+    json_ret = json.dumps({"type": "streaming_finished", "content": "[DONE]", "thread_id": thread_id})
+    # Send an end message with thread_id
+    yield f"data: {json_ret}\n\n"
 
 def generate_unique_thread_id(db: Session) -> str:
     new_thread_id = generate_thread_id()
@@ -699,6 +727,8 @@ async def stream_messages(
         media_type="text/event-stream",
         headers=headers
     )
+
+
 
 
 @app.get("/conversations/{thread_id}", response_model=ConversationResponse)

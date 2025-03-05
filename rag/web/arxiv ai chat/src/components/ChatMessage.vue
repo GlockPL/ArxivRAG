@@ -12,7 +12,7 @@
 <script>
 import { ref, computed, watch } from 'vue'
 import { useAuthStore } from '@/stores'
-import { renderMarkdown } from '@/utils/markdownProcessor'
+import { renderMarkdown, processLatex } from '@/utils/markdownProcessor'
 
 export default {
     name: 'ChatMessage',

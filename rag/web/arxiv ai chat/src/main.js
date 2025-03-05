@@ -3,8 +3,7 @@ import App from './App.vue'
 import router from './router'
 import { createPinia } from 'pinia'
 import axios from 'axios'
-import hljs from 'highlight.js'
-import 'highlight.js/styles/github.min.css'
+import '@/assets/style.css'
 
 // Configure MathJax
 window.MathJax = {
