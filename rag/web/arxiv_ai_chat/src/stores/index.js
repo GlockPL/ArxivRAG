@@ -3,7 +3,7 @@ import { EventSource } from 'eventsource'
 import axios from 'axios'
 import { renderMarkdown } from '@/utils/markdownProcessor'
 
-const API_BASE_URL = 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 // Set up axios interceptors
 // Setup axios interceptors for authentication
