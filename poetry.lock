@@ -873,41 +873,12 @@ langsmith-pyo3 = ["langsmith-pyo3 (>=0.1.0rc2,<0.2.0)"]
 pytest = ["pytest (>=7.0.0)", "rich (>=13.9.4,<14.0.0)"]
 
 [[package]]
-name = "markdown-it-py"
-version = "3.0.0"
-description = "Python port of markdown-it. Markdown parsing, done right!"
-category = "main"
-optional = false
-python-versions = ">=3.8"
-
-[package.dependencies]
-mdurl = ">=0.1,<1.0"
-
-[package.extras]
-benchmarking = ["psutil", "pytest", "pytest-benchmark"]
-code_style = ["pre-commit (>=3.0,<4.0)"]
-compare = ["commonmark (>=0.9,<1.0)", "markdown (>=3.4,<4.0)", "mistletoe (>=1.0,<2.0)", "mistune (>=2.0,<3.0)", "panflute (>=2.3,<3.0)"]
-linkify = ["linkify-it-py (>=1,<3)"]
-plugins = ["mdit-py-plugins"]
-profiling = ["gprof2dot"]
-rtd = ["mdit-py-plugins", "myst-parser", "pyyaml", "sphinx", "sphinx-copybutton", "sphinx-design", "sphinx-book-theme", "jupyter-sphinx"]
-testing = ["coverage", "pytest", "pytest-cov", "pytest-regressions"]
-
-[[package]]
 name = "markupsafe"
 version = "3.0.2"
 description = "Safely add untrusted strings to HTML/XML markup."
 category = "main"
 optional = false
 python-versions = ">=3.9"
-
-[[package]]
-name = "mdurl"
-version = "0.1.2"
-description = "Markdown URL utilities"
-category = "main"
-optional = false
-python-versions = ">=3.7"
 
 [[package]]
 name = "more-itertools"
@@ -1047,20 +1018,6 @@ consortium-standard = ["dataframe-api-compat (>=0.1.7)"]
 all = ["adbc-driver-postgresql (>=0.8.0)", "adbc-driver-sqlite (>=0.8.0)", "beautifulsoup4 (>=4.11.2)", "bottleneck (>=1.3.6)", "dataframe-api-compat (>=0.1.7)", "fastparquet (>=2022.12.0)", "fsspec (>=2022.11.0)", "gcsfs (>=2022.11.0)", "html5lib (>=1.1)", "hypothesis (>=6.46.1)", "jinja2 (>=3.1.2)", "lxml (>=4.9.2)", "matplotlib (>=3.6.3)", "numba (>=0.56.4)", "numexpr (>=2.8.4)", "odfpy (>=1.4.1)", "openpyxl (>=3.1.0)", "pandas-gbq (>=0.19.0)", "psycopg2 (>=2.9.6)", "pyarrow (>=10.0.1)", "pymysql (>=1.0.2)", "PyQt5 (>=5.15.9)", "pyreadstat (>=1.2.0)", "pytest (>=7.3.2)", "pytest-xdist (>=2.2.0)", "python-calamine (>=0.1.7)", "pyxlsb (>=1.0.10)", "qtpy (>=2.3.0)", "scipy (>=1.10.0)", "s3fs (>=2022.11.0)", "SQLAlchemy (>=2.0.0)", "tables (>=3.8.0)", "tabulate (>=0.9.0)", "xarray (>=2022.12.0)", "xlrd (>=2.0.1)", "xlsxwriter (>=3.0.5)", "zstandard (>=0.19.0)"]
 
 [[package]]
-name = "passlib"
-version = "1.7.4"
-description = "comprehensive password hashing framework supporting over 30 schemes"
-category = "main"
-optional = false
-python-versions = "*"
-
-[package.extras]
-argon2 = ["argon2-cffi (>=18.2.0)"]
-bcrypt = ["bcrypt (>=3.1.0)"]
-build_docs = ["sphinx (>=1.6)", "sphinxcontrib-fulltoc (>=1.2.0)", "cloud-sptheme (>=1.10.1)"]
-totp = ["cryptography"]
-
-[[package]]
 name = "pillow"
 version = "11.1.0"
 description = "Python Imaging Library (Fork)"
@@ -1138,16 +1095,8 @@ dev = ["ast-comments (>=1.1.2)", "black (>=24.1.0)", "codespell (>=2.2)", "dnspy
 docs = ["Sphinx (>=5.0)", "furo (==2022.6.21)", "sphinx-autobuild (>=2021.3.14)", "sphinx-autodoc-typehints (>=1.12)"]
 
 [[package]]
-name = "psycopg-binary"
-version = "3.2.5"
-description = "PostgreSQL database adapter for Python -- C optimisation distribution"
-category = "main"
-optional = false
-python-versions = ">=3.8"
-
-[[package]]
 name = "psycopg-pool"
-version = "3.2.5"
+version = "3.2.6"
 description = "Connection Pool for Psycopg"
 category = "main"
 optional = false
@@ -1271,17 +1220,6 @@ numpy = ">=1.16.4"
 [package.extras]
 carto = ["pydeck-carto"]
 jupyter = ["ipywidgets (>=7,<8)", "traitlets (>=4.3.2)", "ipython (>=5.8.0)", "ipykernel (>=5.1.2)"]
-
-[[package]]
-name = "pygments"
-version = "2.19.1"
-description = "Pygments is a syntax highlighting package written in Python."
-category = "main"
-optional = false
-python-versions = ">=3.8"
-
-[package.extras]
-windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
 name = "pyjwt"
@@ -1461,21 +1399,6 @@ python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*"
 requests = ">=2.0.1,<3.0.0"
 
 [[package]]
-name = "rich"
-version = "13.9.4"
-description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
-category = "main"
-optional = false
-python-versions = ">=3.8.0"
-
-[package.dependencies]
-markdown-it-py = ">=2.2.0"
-pygments = ">=2.13.0,<3.0.0"
-
-[package.extras]
-jupyter = ["ipywidgets (>=7.5.1,<9)"]
-
-[[package]]
 name = "rpds-py"
 version = "0.23.0"
 description = "Python bindings to Rust's persistent data structures (rpds)"
@@ -1564,34 +1487,6 @@ aiosqlite = ["greenlet (!=0.4.17)", "aiosqlite", "typing_extensions (!=3.10.0.1)
 sqlcipher = ["sqlcipher3-binary"]
 
 [[package]]
-name = "sse-starlette"
-version = "2.2.1"
-description = "SSE plugin for Starlette"
-category = "main"
-optional = false
-python-versions = ">=3.9"
-
-[package.dependencies]
-anyio = ">=4.7.0"
-starlette = ">=0.41.3"
-
-[package.extras]
-examples = ["fastapi"]
-uvicorn = ["uvicorn (>=0.34.0)"]
-
-[[package]]
-name = "sseclient"
-version = "0.0.27"
-description = "Python client library for reading Server Sent Event streams."
-category = "main"
-optional = false
-python-versions = "*"
-
-[package.dependencies]
-requests = ">=2.9"
-six = "*"
-
-[[package]]
 name = "starlette"
 version = "0.45.3"
 description = "The little ASGI library that shines."
@@ -1607,7 +1502,7 @@ full = ["httpx (>=0.27.0,<0.29.0)", "itsdangerous", "jinja2", "python-multipart 
 
 [[package]]
 name = "streamlit"
-version = "1.42.2"
+version = "1.43.0"
 description = "A faster way to build and share data apps"
 category = "main"
 optional = false
@@ -1627,7 +1522,6 @@ protobuf = ">=3.20,<6"
 pyarrow = ">=7.0"
 pydeck = ">=0.8.0b4,<1"
 requests = ">=2.27,<3"
-rich = ">=10.14.0,<14"
 tenacity = ">=8.1.0,<10"
 toml = ">=0.10.1,<2"
 tornado = ">=6.0.3,<7"
@@ -1652,31 +1546,6 @@ extra-streamlit-components = ">=0.1.70"
 PyJWT = ">=2.3.0"
 PyYAML = ">=5.3.1"
 streamlit = ">=1.37.0"
-
-[[package]]
-name = "streamlit-cookies-controller"
-version = "0.0.4"
-description = "Streamlit cookies controller"
-category = "main"
-optional = false
-python-versions = ">=3.8"
-
-[package.dependencies]
-streamlit = ">=0.63"
-
-[package.extras]
-devel = ["wheel", "pytest (==7.4.0)", "playwright (==1.39.0)", "requests (==2.31.0)", "pytest-playwright-snapshot (==1.0)", "pytest-rerunfailures (==12.0)"]
-
-[[package]]
-name = "streamlit-option-menu"
-version = "0.4.0"
-description = "streamlit-option-menu is a simple Streamlit component that allows users to select a single item from a list of options in a menu."
-category = "main"
-optional = false
-python-versions = ">=3.6"
-
-[package.dependencies]
-streamlit = ">=1.36"
 
 [[package]]
 name = "tenacity"
@@ -1869,7 +1738,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.11"
-content-hash = "180168e55704ae78e642f375e9fb043a6a6ca5f721433d881315e23045733299"
+content-hash = "a4f29844661f11cb3bac182f050404a70948e464c6b8c69c887185ae8b366682"
 
 [metadata.files]
 aiohappyeyeballs = []
@@ -1936,9 +1805,7 @@ langgraph-checkpoint = []
 langgraph-checkpoint-postgres = []
 langgraph-sdk = []
 langsmith = []
-markdown-it-py = []
 markupsafe = []
-mdurl = []
 more-itertools = []
 msgpack = []
 multidict = []
@@ -1948,14 +1815,12 @@ openai = []
 orjson = []
 packaging = []
 pandas = []
-passlib = []
 pillow = []
 pluggy = []
 propcache = []
 proto-plus = []
 protobuf = []
 psycopg = []
-psycopg-binary = []
 psycopg-pool = []
 psycopg2-binary = []
 py = []
@@ -1967,7 +1832,6 @@ pydantic = []
 pydantic-core = []
 pydantic-settings = []
 pydeck = []
-pygments = []
 pyjwt = []
 pyparsing = []
 pytest = []
@@ -1982,7 +1846,6 @@ referencing = []
 regex = []
 requests = []
 requests-toolbelt = []
-rich = []
 rpds-py = []
 rsa = []
 simsimd = []
@@ -1990,13 +1853,9 @@ six = []
 smmap = []
 sniffio = []
 sqlalchemy = []
-sse-starlette = []
-sseclient = []
 starlette = []
 streamlit = []
 streamlit-authenticator = []
-streamlit-cookies-controller = []
-streamlit-option-menu = []
 tenacity = []
 tiktoken = []
 toml = []

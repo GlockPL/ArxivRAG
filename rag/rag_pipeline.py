@@ -1,14 +1,15 @@
+import logging
 from datetime import datetime
 from typing import Generator, Iterator
 
 from langchain_core.documents import Document
-from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, AnyMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, ToolMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.checkpoint.postgres import PostgresSaver
-from langgraph.graph import END, StateGraph, add_messages, MessagesState
+from langgraph.graph import END, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import StateSnapshot
@@ -18,7 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from typing_extensions import TypedDict, List, Annotated
 
-from rag.db.db import WeaviateDB, PostgresDB
+from rag.db.db import WeaviateDB
 from rag.db.db_objects import ConversationTitle
 from rag.settings import Settings, DBSettings
 from rag.utils import get_llm, get_big_llm, get_embeddings, get_oai_llm
@@ -165,19 +166,11 @@ class RAG:
         graph_builder.add_edge("tools", "generate")
         graph_builder.add_edge("generate", END)
 
-        pg = PostgresDB()
-
-        if not pg.conversation_titles_exists():
-            print("Setting up conversation titles table")
-            pg.create_conversation_title_table()
 
         checkpointer = PostgresSaver(self.connection)
 
-        if not pg.checkpoint_exists():
-            print("Setting up checkpointer database")
-            checkpointer.setup()
-
-        pg.close()
+        logging.info("Setting up checkpointer database")
+        checkpointer.setup()
 
         graph = graph_builder.compile(checkpointer=checkpointer)
         # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional
