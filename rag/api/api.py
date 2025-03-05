@@ -841,7 +841,7 @@ async def delete_conversation(
 
     return {"message": f"Conversation {thread_id} and all associated checkpoints deleted successfully"}
 
-frontend_path = Path('./rag/web/arxiv ai chat/dist')
+frontend_path = Path('./rag/web/arxiv_ai_chat/dist')
 app.mount("/assets", StaticFiles(directory=frontend_path / "assets"), name="assets")
 
 # Serve other static files directly if they exist

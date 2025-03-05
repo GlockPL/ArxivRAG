@@ -19,6 +19,7 @@ RUN apt-get update \
         curl \
         gcc \
         python3-dev \
+        npm \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,6 +34,14 @@ RUN poetry install --no-root
 
 # Copy the application code and Vue.js build
 COPY ./rag /app/rag
+
+WORKDIR /app/rag/web/arxiv_ai_chat/
+
+RUN npm install
+
+RUN npm run build
+
+WORKDIR /app
 
 # Expose the port the app runs on
 EXPOSE 8000
