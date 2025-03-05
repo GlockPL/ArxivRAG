@@ -1095,6 +1095,14 @@ dev = ["ast-comments (>=1.1.2)", "black (>=24.1.0)", "codespell (>=2.2)", "dnspy
 docs = ["Sphinx (>=5.0)", "furo (==2022.6.21)", "sphinx-autobuild (>=2021.3.14)", "sphinx-autodoc-typehints (>=1.12)"]
 
 [[package]]
+name = "psycopg-binary"
+version = "3.2.5"
+description = "PostgreSQL database adapter for Python -- C optimisation distribution"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[[package]]
 name = "psycopg-pool"
 version = "3.2.6"
 description = "Connection Pool for Psycopg"
@@ -1738,7 +1746,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.11"
-content-hash = "a4f29844661f11cb3bac182f050404a70948e464c6b8c69c887185ae8b366682"
+content-hash = "c82e73ef6365ba75c9aedb3c419636513b5e19d0f24e14442eb6c4c2721de869"
 
 [metadata.files]
 aiohappyeyeballs = []
@@ -1821,6 +1829,7 @@ propcache = []
 proto-plus = []
 protobuf = []
 psycopg = []
+psycopg-binary = []
 psycopg-pool = []
 psycopg2-binary = []
 py = []
