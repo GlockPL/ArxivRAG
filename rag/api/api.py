@@ -2,12 +2,14 @@ import json
 import logging
 import random
 import uuid
+from pathlib import Path
 
 import bcrypt
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import List, Optional, Dict, AsyncGenerator
@@ -839,6 +841,19 @@ async def delete_conversation(
 
     return {"message": f"Conversation {thread_id} and all associated checkpoints deleted successfully"}
 
+frontend_path = Path('./rag/web/arxiv ai chat/dist')
+app.mount("/assets", StaticFiles(directory=frontend_path / "assets"), name="assets")
+
+# Serve other static files directly if they exist
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse(frontend_path / "favicon.ico")
+
+# Catch-all route to return index.html for SPA routing
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # Otherwise return index.html for SPA routing
+    return FileResponse(frontend_path / "index.html")
 
 if __name__ == "__main__":
     import uvicorn
