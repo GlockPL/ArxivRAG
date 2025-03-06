@@ -23,3 +23,13 @@ To lauch simply type:
 ```commandline
 poetry run streamlit run ./rag/ui.py
 ```
+
+## Creating backup for weaviate:
+```cmd
+curl -X POST -H "Content-Type: application/json" -d '{"id": "arxiv-backup-v_1_0"}' http://localhost:8080/v1/backups/filesystem
+```
+
+## Restoring from backup:
+```cmd
+curl -X POST -H "Content-Type: application/json" -d '{"id": "arxiv-backup-v_1_0"}' http://localhost:8090/v1/backups/filesystem/arxiv-backup-v_1_0/restore
+```
