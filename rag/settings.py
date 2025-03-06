@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
 class DBSettings(BaseSettings):
     # Postgresql settings
-    host: str = Field("localhost")
+    host: str = Field("localhost", alias="PG_HOST")
     database: str = Field("", alias='PG_USER')
     user: str = Field("", alias='PG_USER')
     password: str = Field("", alias='PG_PASS')

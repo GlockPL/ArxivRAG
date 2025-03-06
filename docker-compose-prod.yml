@@ -64,6 +64,8 @@ services:
   app:
     build:
       dockerfile: ./Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     ports:
       - "80:8000"
     environment:
@@ -74,7 +76,9 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       PG_USER: ${PG_USER}
       PG_PASS: ${PG_PASS}
+      PG_HOST: ${PG_HOST}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     networks:
       - rag_network
 

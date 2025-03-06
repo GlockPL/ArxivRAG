@@ -170,7 +170,7 @@ class RAG:
         checkpointer = PostgresSaver(self.connection)
 
         logging.info("Setting up checkpointer database")
-        checkpointer.setup()
+        # checkpointer.setup()
 
         graph = graph_builder.compile(checkpointer=checkpointer)
         # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional

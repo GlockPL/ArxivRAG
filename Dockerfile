@@ -4,6 +4,8 @@ LABEL org.opencontainers.image.title="arxiv-cs_Ai-chat"
 LABEL org.opencontainers.image.description="FastAPI server with Vue.js frontend for arXiv AI chat"
 
 # Set environment variables
+ARG VITE_API_BASE_URL=http://localhost:8000
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV POETRY_HOME=/opt/poetry
