@@ -15,6 +15,7 @@ services:
     - "50051:50051"
     volumes:
     - weaviate_data:/var/lib/weaviate
+    - ./backups:/tmp/backups
     restart: on-failure:0
     environment:
       GOOGLE_APIKEY: ${GOOGLE_API_KEY}
@@ -22,8 +23,9 @@ services:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       DEFAULT_VECTORIZER_MODULE: 'text2vec-palm'
-      ENABLE_MODULES: 'text2vec-palm,generative-palm'
+      ENABLE_MODULES: 'text2vec-palm,generative-palm,backup-filesystem'
       CLUSTER_HOSTNAME: 'node1'
+      BACKUP_FILESYSTEM_PATH: '/tmp/backups'
     networks:
       - rag_network
 
