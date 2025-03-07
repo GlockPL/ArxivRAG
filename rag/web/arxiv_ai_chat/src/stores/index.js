@@ -179,6 +179,7 @@ export const useAuthStore = defineStore('auth', {
 
                 return true
             } catch (error) {
+                console.log('Login error:', error)
                 console.error('Login error:', error)
 
                 if (error.response && error.response.status === 401) {
