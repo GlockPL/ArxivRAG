@@ -1,6 +1,7 @@
 from pathlib import Path
 from google import genai
 from google.genai.errors import ClientError
+from mistralai import Mistral
 import json_repair
 import json
 import natsort
@@ -40,7 +41,63 @@ def process_file_gemini_flash(file_path: Path, json_path: Path):
     except Exception as ex:
         print(f"Exception caught: {ex}")
 
+def process_file_mistral(file_path: Path, json_path: Path)
+    api_key = os.getenv('MISTRAL_API_KEY')
+    client = Mistral(api_key=api_key)
+    # Upload the PDF using the File API
+    uploaded_pdf = client.files.upload(file={"file_name": file_path.name,"content": file_path.open("rb"), }, purpose="ocr") 
+    signed_url = client.files.get_signed_url(file_id=uploaded_pdf.id)
+    ocr_response = client.ocr.process(
+    model="mistral-ocr-latest",
+    document={
+        "type": "document_url",
+        "document_url": signed_url.url,
+    }, 
+    include_image_base64=False
+    )
 
+    prompt = f"This is an article from arxiv with article id: {file_path.stem[:-2]}."
+    prompt += "Parse the text from this article into valid JSON with this structure: {title:str,authors:[str],abstract:str,sections:[title:str,content:str]}. Discard references, acknowledgements, tabels with captions and images with captions. Every equation must be parses into latex inplace."
+    try:
+        client = Mistral(api_key=api_key)
+
+        # Define the messages for the chat
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "what is the last sentence in the document"
+                    },
+                    {
+                        "type": "document_url",
+                        "document_url": "https://arxiv.org/pdf/1805.04770"
+                    }
+                ]
+            }
+        ]
+
+        # Get the chat response
+        chat_response = client.chat.complete(
+            model=model,
+            messages=messages
+        )
+
+        # Print the content of the response
+        print(chat_response.choices[0].message.content)
+                
+        
+        print(ocr_response)
+        valid_json = json_repair.loads(response.text)
+
+        with json_path.open('w') as f:
+            json.dump(valid_json, f)
+
+        client.files.delete(name=sample_file.name)
+
+    except Exception as ex:
+        print(f"Exception caught: {ex}")
 
 def list_files():
     pdfs_path = Path('../pdf')
