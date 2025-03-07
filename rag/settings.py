@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     temperature: float = Field(0.1)
     text_key: str = Field("page_content")
     logging_level: int = Field(logging.DEBUG)
+    weaviate_host: str = Field('localhost', alias='WEAVIATE_HOST')
 
 
 class DBSettings(BaseSettings):

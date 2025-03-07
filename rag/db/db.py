@@ -17,7 +17,8 @@ class WeaviateDB:
         self.client = None
 
     def __enter__(self) -> weaviate.WeaviateClient:
-        self.client = weaviate.connect_to_local()
+        self.client = weaviate.connect_to_local(host=self.settings.weaviate_host)
+        meta = self.client.get_meta()
         if not self.client.collections.exists(self.settings.collection):
             self.configure()
 

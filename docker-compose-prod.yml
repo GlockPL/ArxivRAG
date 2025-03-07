@@ -10,7 +10,7 @@ services:
     - --scheme
     - http
     image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
-    expose:
+    ports:
     - "8080:8080"
     - "50051:50051"
     volumes:
@@ -80,7 +80,9 @@ services:
       PG_PASS: ${PG_PASS}
       PG_HOST: ${PG_HOST}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
       VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      WEAVIATE_HOST: ${WEAVIATE_HOST}
     networks:
       - rag_network
 

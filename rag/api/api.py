@@ -2,6 +2,7 @@ import json
 import logging
 import random
 import uuid
+import weaviate
 from pathlib import Path
 
 import bcrypt
@@ -21,11 +22,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker
 
-from rag.settings import DBSettings, TokenSettings, RedisSettings
+from rag.settings import DBSettings, TokenSettings, RedisSettings, Settings
 from rag.db.db_objects import User, LoginHistory, ConversationTitle, Base, CheckpointBlob, CheckpointWrite, Checkpoint
 from rag.rag_pipeline import RAG
 
 db_settings = DBSettings()
+main_settings = Settings()
 token_settings = TokenSettings()
 redis_settings = RedisSettings()
 
@@ -351,7 +353,6 @@ def get_messages(thread_id: str):
 
 
 # ----- API Endpoints -----
-
 @app.post("/register", response_model=UserResponse)
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
     # Check if username exists
