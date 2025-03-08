@@ -1,0 +1,43 @@
+name: Pylint
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: 1.7.1
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+    
+    - name: Check if pyproject.toml exists
+      id: check_files
+      uses: andstor/file-existence-action@v2
+      with:
+        files: "pyproject.toml"
+    
+    - name: Create pyproject.toml if it doesn't exist
+      if: steps.check_files.outputs.files_exists == 'false'
+      run: |
+        poetry init --no-interaction --name=project --author="CI" --python="^3.11"
+    
+    - name: Install dependencies and add Pylint
+      run: |
+        poetry add pylint --group dev
+        # If you have other dependencies, add them here with:
+        # poetry add package_name
+    
+    - name: Analysing the code with pylint
+      run: |
+        poetry run pylint $(git ls-files '*.py') || true
