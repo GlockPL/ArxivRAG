@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Specify the input file containing arXiv IDs, one per line
-input_file="ids_with_cs_ai.txt"
+input_file="../../ids_with_cs_ai.txt"
 
 # Check if the input file exists
 if [ ! -f "$input_file" ]; then
@@ -20,7 +20,7 @@ while IFS= read -r id; do
     prefix=$(echo "$id" | cut -d '.' -f 1)
     
     # Construct the gsutil command
-    gsutil cp "gs://arxiv-dataset/arxiv/arxiv/pdf/${prefix}/${id}.pdf" ./pdf/
+    gsutil cp "gs://arxiv-dataset/arxiv/arxiv/pdf/${prefix}/${id}.pdf" ../../pdf/
     
 done < "$input_file"
 

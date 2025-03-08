@@ -25,8 +25,8 @@ def write_output(ids, output_file):
         f.write('\n'.join(ids))
 
 # Example usage
-input_jsonl = "arxiv-metadata-oai-snapshot.json"
-output_txt = "ids_with_cs_ai.txt"
+input_jsonl = "../../arxiv-metadata-oai-snapshot.json"
+output_txt = "../../ids_with_cs_ai.txt"
 
 collected_ids = process_jsonl(input_jsonl)
 write_output(collected_ids, output_txt)
