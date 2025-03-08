@@ -1,0 +1,87 @@
+version: '3.9'
+
+services:
+  weaviate:
+    command:
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8080'
+    - --scheme
+    - http
+    image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
+    ports:
+    - "8080:8080"
+    - "50051:50051"
+    volumes:
+    - weaviate_data:/var/lib/weaviate
+    - ./backups:/tmp/backups
+    restart: on-failure:0
+    environment:
+      GOOGLE_APIKEY: ${GOOGLE_API_KEY}
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-palm'
+      ENABLE_MODULES: 'text2vec-palm,generative-palm,backup-filesystem'
+      CLUSTER_HOSTNAME: 'node1'
+      BACKUP_FILESYSTEM_PATH: '/tmp/backups'
+    networks:
+      - rag_network
+
+  postgres:
+    image: postgres:17.4
+    restart: always
+    shm_size: 128mb
+    expose:
+      - "5432:5432"
+    volumes:
+        - pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+    networks:
+      - rag_network
+
+  redis:
+    image: redis:7.4
+    restart: always
+    expose:
+      - "6379:6379"
+    volumes:
+      - redis_data:/root/redis
+    environment:
+      - REDIS_PORT=6379
+    networks:
+      - rag_network
+
+  app:
+    build:
+      dockerfile: ./Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    ports:
+      - "80:8000"
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      PG_USER: ${PG_USER}
+      PG_PASS: ${PG_PASS}
+      PG_HOST: ${PG_HOST}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      WEAVIATE_HOST: ${WEAVIATE_HOST}
+    networks:
+      - rag_network
+
+volumes:
+  weaviate_data:
+  pg_data:
+  redis_data:
+
+networks:
+  rag_network:

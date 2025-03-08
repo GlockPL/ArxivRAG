@@ -1,2 +1,8 @@
 .env
 __pycache__
+.idea
+*.dat
+*.pyc
+graph.png
+graph_test.png
+node_modules

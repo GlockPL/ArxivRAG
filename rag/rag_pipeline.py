@@ -1,23 +1,28 @@
+import logging
+from datetime import datetime
 from typing import Generator, Iterator
 
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, AnyMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, ToolMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.checkpoint.postgres import PostgresSaver
-from langgraph.graph import END, StateGraph, add_messages, MessagesState
+from langgraph.graph import END, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.types import StateSnapshot
 from psycopg import Connection
 from pydantic import BaseModel
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from typing_extensions import TypedDict, List, Annotated
 
-from db import WeaviateDB, PostgresDB
-from settings import Settings
-from utils import get_llm, get_big_llm, get_embeddings, check_database_tables
+from rag.db.db import WeaviateDB
+from rag.db.db_objects import ConversationTitle
+from rag.settings import Settings, DBSettings
+from rag.utils import get_llm, get_big_llm, get_embeddings, get_oai_llm
 
 
 class RetrieveInput(BaseModel):
@@ -28,10 +33,7 @@ class GrapState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     title: str
 
-
 @tool(response_format="content_and_artifact", args_schema=RetrieveInput)
-
-
 def retrieve(query: str) -> tuple[str, List[Document]]:
     """
     Query the vector store using embeddings that will retrieve sections from Arxiv cs.AI articles.
@@ -64,9 +66,12 @@ class RAG:
         {context}
         """
         self.rag_prompt = PromptTemplate.from_template(self.template)
-        self.settings = Settings()
-        self.llm = get_big_llm()
-        db_uri = f"postgresql://{self.settings.user}:{self.settings.password}@{self.settings.host}:{self.settings.db_port}/{self.settings.user}?sslmode=disable"
+        self.db_settings = DBSettings()
+        self.llm = get_llm()
+        # self.llm = get_oai_llm()
+        db_uri = f"postgresql://{self.db_settings.user}:{self.db_settings.password}@{self.db_settings.host}:{self.db_settings.db_port}/{self.db_settings.user}?sslmode=disable"
+        self.engine = create_engine(db_uri)
+        self.session = Session(self.engine)
         self.connection = Connection.connect(db_uri, autocommit=True)
         self.graph = self.create_graph()
 
@@ -118,16 +123,24 @@ class RAG:
             user_query = messages[0].content  # Assumes first message is the user query
             prompt = [
                 SystemMessage(
-                    content="Create a short, concise title for this conversation.  The title should be no more than 5 words.  Here is the user's first question:"),
+                    content="Create a short, single concise title for this conversation. The title should be no more than 5 words. Return just the title. Here is the user's first question:"),
                 HumanMessage(content=user_query)
             ]
             response = self.llm.invoke(prompt)
             title = response.content
             thread_id = config["metadata"]["thread_id"]
+            user_id = config["configurable"]["user_id"]
 
-            pg = PostgresDB()
-            pg.insert_conversation_title(thread_id, title)
-            pg.close()
+            new_conversation = ConversationTitle(
+                thread_id=thread_id,
+                title=title,
+                created_at=datetime.now(),
+                user_id=user_id
+            )
+
+            # Add to session and commit
+            self.session.add(new_conversation)
+            self.session.commit()
 
             return {"title": title, "messages": messages}
 
@@ -153,31 +166,27 @@ class RAG:
         graph_builder.add_edge("tools", "generate")
         graph_builder.add_edge("generate", END)
 
-        any_tables_in_db, tables = check_database_tables()
-        if not any_tables_in_db:
-            print("Setting up conversation titles table")
-            pg = PostgresDB()
-            pg.create_conversation_title_table()
-            pg.close()
 
         checkpointer = PostgresSaver(self.connection)
-        if not any_tables_in_db:
-            print("Setting up checkpointer database")
-            checkpointer.setup()
+
+        logging.info("Setting up checkpointer database")
+        # checkpointer.setup()
 
         graph = graph_builder.compile(checkpointer=checkpointer)
         # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional
         return graph
 
-    def stream(self, query: str, thread_id: str) -> Generator[str, None, None]:
+    def stream(self, query: str, thread_id: str, user_id: int) -> Generator[str, None, None]:
         """Streams the final response tokens."""
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
         for chunk, metadata in self.graph.stream({"messages": [{"role": "user", "content": query}]}, config=config,
                                                  stream_mode="messages"):
             if chunk.content:
                 if "langgraph_node" in metadata:
                     if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
                         yield chunk.content
+                    # else:
+                    #     yield "Thinking"
 
     def get_state_history(self, config: RunnableConfig) -> Iterator[StateSnapshot]:
         return self.graph.get_state_history(config)

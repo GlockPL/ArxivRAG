@@ -1,6 +1,8 @@
 import logging
 
 import json
+from typing import Any, Generator
+
 from natsort import natsorted
 from tqdm import tqdm
 
@@ -8,11 +10,12 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from langchain_weaviate.vectorstores import WeaviateVectorStore
+from weaviate.collections.classes.aggregate import GroupByAggregate
 from weaviate.collections.classes.filters import Filter
 
-from settings import Settings
-from db import WeaviateDB
-from utils import get_llm
+from rag.settings import Settings
+from rag.db.db import WeaviateDB
+from rag.utils import get_llm
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -45,28 +48,82 @@ class ContextualIndexing:
             response = coll.aggregate.over_all(total_count=True, filters=Filter.by_property("source").equal(source))
             return response.total_count
 
+    def check_sources_not_in_db(self, file_list):
+        """
+        Check which files in the provided list exist as sources in Weaviate.
+
+        Args:
+            file_list: List of file paths
+
+        Returns:
+            A dictionary with file sources as keys and their count in the database as values
+        """
+        # Extract source identifiers from file paths (assuming stem is used as source)
+        sources = [file_path.stem for file_path in file_list]
+
+        responses = []
+        with WeaviateDB() as wdb:
+            collection = wdb.collections.get(self.settings.collection)
+
+            batch = 100
+
+            for i in range(0, len(file_list), batch):
+                # Use the 'or' operator to check for any of the sources in a single query
+                batched_list = sources[i: i + batch].copy()
+                source_filter = Filter.by_property("source").contains_any(batched_list)
+
+                # Use groupby to get counts for each source in one query
+                response = collection.aggregate.over_all(
+                    group_by=GroupByAggregate(prop="source"),
+                    total_count=True,
+                    filters=source_filter,
+                )
+                if hasattr(response, 'groups'):
+                    responses.extend(response.groups)
+
+
+            # Create a dictionary of source -> count
+            source_counts = {group.grouped_by.value: group.total_count for group in responses}
+
+            # Add entries with zero count for sources not found in the database
+            sources_set = set(sources)
+            sources_counts_set = set(source_counts)
+
+            not_indexed_files_list = list(sources_set.difference(sources_counts_set))
+
+            return not_indexed_files_list
+
     def check_if_collection_exists(self) -> bool:
         with WeaviateDB() as wdb:
             return wdb.collections.exists(self.settings.collection)
 
-    def create_documents(self) -> list:
+    def create_documents(self) -> Generator[list[Document], Any, None]:
         json_path = self.settings.json_dir
 
         documents = []
         file_list = natsorted(json_path.glob("*.json"), reverse=True)
+
+        srcs = self.check_sources_not_in_db(file_list)
         i = 0
 
-        for json_file in tqdm(file_list):
+        for file_stem in (pbr:=tqdm(srcs)):
             if i == 0:
                 documents = []
 
-            if self.check_if_collection_exists() and self.count_source(json_file.stem):
-                continue
+            pbr.set_postfix_str(f"File: {file_stem}")
+
+            json_file = json_path / f"{file_stem}.json"
 
             with json_file.open('r') as jf:
                 json_article = json.load(jf)
 
+
             if 'title' not in json_article:
+                json_file.unlink(missing_ok=True)
+                continue
+
+            if 'sections' not in json_article:
+                json_file.unlink(missing_ok=True)
                 continue
 
             for sec_number, section in enumerate(json_article['sections'], start=1):
