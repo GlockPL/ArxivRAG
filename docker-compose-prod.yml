@@ -43,14 +43,6 @@ services:
     networks:
       - rag_network
 
-  adminer:
-    image: adminer:4.8.1-standalone
-    restart: always
-    ports:
-      - "8880:8080"
-    networks:
-      - rag_network
-
   redis:
     image: redis:7.4
     restart: always
