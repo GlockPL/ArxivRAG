@@ -68,6 +68,18 @@ python-versions = ">=3.8"
 cryptography = "*"
 
 [[package]]
+name = "bcrypt"
+version = "4.3.0"
+description = "Modern password hashing for your software and your servers"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[package.extras]
+tests = ["pytest (>=3.2.1,!=3.3.0)"]
+typecheck = ["mypy"]
+
+[[package]]
 name = "cachetools"
 version = "5.5.2"
 description = "Extensible memoizing collections and decorators"
@@ -1326,7 +1338,7 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.11"
-content-hash = "d15852eee764efbc933e47c96bbcec8f61a80835b14c54f0e8e2f2f382f55a8f"
+content-hash = "6360f6016f9c205af8367db58a80207033ade66bedb4b8e47c52ecb1cb97cab0"
 
 [metadata.files]
 annotated-types = []
@@ -1335,6 +1347,7 @@ async-timeout = []
 atomicwrites = []
 attrs = []
 authlib = []
+bcrypt = []
 cachetools = []
 certifi = []
 cffi = []
