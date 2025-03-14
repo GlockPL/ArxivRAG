@@ -1,6 +1,5 @@
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_openai import ChatOpenAI
-from psycopg import Connection, Error
 
 from rag.settings import Settings
 

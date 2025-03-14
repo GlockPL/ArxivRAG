@@ -13,6 +13,7 @@ const pinia = createPinia()
 // Create Vue app
 const app = createApp(App)
 
+
 // Global properties
 app.config.globalProperties.$axios = axios
 

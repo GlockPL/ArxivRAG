@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from typing import Generator, Iterator
+from typing_extensions import TypedDict, List, Annotated
 
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, ToolMessage
@@ -17,7 +18,6 @@ from psycopg import Connection
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from typing_extensions import TypedDict, List, Annotated
 
 from rag.db.db import WeaviateDB
 from rag.db.db_objects import ConversationTitle

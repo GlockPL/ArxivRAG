@@ -1,14 +1,10 @@
-from datetime import datetime
-
-import bcrypt
 import weaviate
 import logging
 
-from psycopg import Connection
 from weaviate.collections.classes.config import Configure
 import weaviate.classes as wvc
 
-from rag.settings import Settings, DBSettings
+from rag.settings import Settings
 
 
 class WeaviateDB:

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+
 def process_jsonl(input_file):
     ids = []
     all_pdfs = list(Path('../../pdf/').glob('*.pdf'))
@@ -20,13 +21,16 @@ def process_jsonl(input_file):
                 continue
     return ids[::-1]
 
+
 def write_output(ids, output_file):
     with open(output_file, 'w') as f:
         f.write('\n'.join(ids))
 
-# Example usage
-input_jsonl = "../../arxiv-metadata-oai-snapshot.json"
-output_txt = "../../ids_with_cs_ai.txt"
 
-collected_ids = process_jsonl(input_jsonl)
-write_output(collected_ids, output_txt)
+if __name__ == "__main__":
+    # Example usage
+    input_jsonl = "../../arxiv-metadata-oai-snapshot.json"
+    output_txt = "../../ids_with_cs_ai.txt"
+
+    collected_ids = process_jsonl(input_jsonl)
+    write_output(collected_ids, output_txt)
