@@ -120,36 +120,3 @@ export function renderMarkdown(text) {
 export function rehighlightCode() {
   Prism.highlightAll();
 }
-
-/**
- * Waits for MathJax to be ready then processes any LaTeX in the document
- * @returns {Promise} Resolves when processing is complete
- */
-export async function processLatex() {
-  try {
-    // Wait for MathJax to be ready
-    if (!window.MathJax || !window.MathJax.typesetPromise) {
-      let attempts = 0;
-      const maxAttempts = 30; // Try for 15 seconds
-      
-      await new Promise((resolve) => {
-        const checkMathJax = () => {
-          attempts++;
-          if ((window.MathJax && window.MathJax.typesetPromise) || attempts >= maxAttempts) {
-            return resolve();
-          }
-          setTimeout(checkMathJax, 500);
-        };
-        checkMathJax();
-      });
-    }
-
-    // Process LaTeX if MathJax is available
-    if (window.MathJax && window.MathJax.typesetPromise) {
-      await window.MathJax.typesetPromise();
-      console.log('LaTeX processing complete');
-    }
-  } catch (err) {
-    console.error('Error in processLatex:', err);
-  }
-}

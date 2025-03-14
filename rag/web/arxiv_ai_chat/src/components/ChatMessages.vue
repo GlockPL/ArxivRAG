@@ -11,7 +11,6 @@
   <script>
   import { ref, computed, watch, nextTick } from 'vue'
   import { useChatStore } from '@/stores'
-  import { processLatex } from '@/utils/markdownProcessor'
   import ChatMessage from '@/components/ChatMessage.vue'
   
   export default {
@@ -35,11 +34,7 @@
       
       // Process LaTeX and scroll to bottom when messages change
       watch(() => activeChat.value?.messages, () => {
-        scrollToBottom()
-        // Process LaTeX when messages change with a slight delay
-        setTimeout(() => {
-          processLatex()
-        }, 300)
+        scrollToBottom()       
       }, { deep: true })
       
       // Initial scroll to bottom when component mounts

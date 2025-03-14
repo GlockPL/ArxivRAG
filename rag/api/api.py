@@ -1,41 +1,35 @@
 import json
 import logging
-import random
-import uuid
 from pathlib import Path
+from datetime import timedelta
+from typing import List, Dict, AsyncGenerator
 
-import bcrypt
+import asyncio
+
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage, AIMessage
-from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import List, Optional, Dict, AsyncGenerator
-from datetime import datetime, timedelta, UTC
 from jose import JWTError, jwt
-import asyncio
-import redis
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, desc
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from rag.settings import DBSettings, TokenSettings, RedisSettings, Settings
-from rag.db.db_objects import User, LoginHistory, ConversationTitle, Base, CheckpointBlob, CheckpointWrite, Checkpoint
+from rag.api.models import MessageResponse, TokenData, UserResponse, UserCreate, Token, ConversationResponse, \
+    RefreshRequest
+from rag.api.utils import get_password_hash, authenticate_user, create_access_token, create_refresh_token, \
+    store_refresh_token, is_token_blacklisted, validate_refresh_token, invalidate_refresh_token, logout_operation, \
+    invalidate_all_user_tokens, get_user_conversation_newest, get_user_conversation_count, get_user_conversations, \
+    get_one_conversation, generate_unique_thread_id
+from rag.settings import DBSettings, TokenSettings, Settings
+from rag.db.db_objects import User, LoginHistory, Base, CheckpointBlob, CheckpointWrite, Checkpoint
 from rag.rag_pipeline import RAG
 
 db_settings = DBSettings()
 main_settings = Settings()
 token_settings = TokenSettings()
-redis_settings = RedisSettings()
-
-redis_client = redis.Redis(
-    host=redis_settings.redis_host,
-    port=redis_settings.redis_port,
-    db=redis_settings.redis_db,
-    decode_responses=True
-)
 
 postgres_db_uri = f"postgresql://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}?sslmode=disable"
 engine = create_engine(postgres_db_uri)
@@ -70,259 +64,8 @@ def get_db():
         db.close()
 
 
-# ----- Pydantic Models for API -----
-
-class UserBase(BaseModel):
-    username: str
-    email: EmailStr
-    name: str
-
-
-class UserCreate(UserBase):
-    password: str
-
-
-class UserResponse(UserBase):
-    id: int
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-    token_type: Optional[str] = None
-
-
-class Token(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str
-
-
-class MessageCreate(BaseModel):
-    content: str
-
-
-class MessageResponse(BaseModel):
-    content: str
-    type: str
-    thread_id: str
-
-
-class ConversationCreate(BaseModel):
-    title: str
-    participants: List[str]  # List of usernames
-
-
-class ConversationResponse(BaseModel):
-    thread_id: str
-    title: str
-    created_at: datetime
-    user_id: int
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ChatSummary(BaseModel):
-    thread_id: str
-    title: str
-    created_at: datetime
-    last_message: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
-
 # In-memory message queue for streaming
 user_message_queues: Dict[int, asyncio.Queue] = {}
-
-
-# ----- Token Management in Redis -----
-
-def add_to_blacklist(token: str, expires_in: int):
-    """Add a token to the blacklist (used tokens)"""
-    try:
-        redis_client.setex(f"bl_token:{token}", expires_in, "1")
-        return True
-    except Exception as e:
-        print(f"Redis error: {str(e)}")
-        return False
-
-
-def is_token_blacklisted(token: str) -> bool:
-    """Check if a token is blacklisted"""
-    try:
-        return bool(redis_client.exists(f"bl_token:{token}"))
-    except Exception as e:
-        print(f"Redis error: {str(e)}")
-        return False
-
-
-def store_refresh_token(user_id: int, token: str, expires_in: int):
-    """Store a refresh token for a user"""
-    try:
-        # Create user's token set if it doesn't exist
-        user_token_key = f"user:{user_id}:refresh_tokens"
-        redis_client.sadd(user_token_key, token)
-        # Set expiration for this specific token
-        redis_client.setex(f"refresh_token:{token}", expires_in, str(user_id))
-        return True
-    except Exception as e:
-        print(f"Redis error: {str(e)}")
-        return False
-
-
-def validate_refresh_token(token: str) -> Optional[int]:
-    """Validate a refresh token and return the user ID if valid"""
-    try:
-        user_id = redis_client.get(f"refresh_token:{token}")
-        if user_id:
-            return int(user_id)
-        return None
-    except Exception as e:
-        print(f"Redis error: {str(e)}")
-        return None
-
-
-def invalidate_refresh_token(token: str) -> bool:
-    """Invalidate a single refresh token"""
-    try:
-        # Get user ID associated with this token
-        user_id = redis_client.get(f"refresh_token:{token}")
-        if user_id:
-            # Remove token from user's set
-            redis_client.srem(f"user:{user_id}:refresh_tokens", token)
-        # Delete the token itself
-        redis_client.delete(f"refresh_token:{token}")
-        return True
-    except Exception as e:
-        print(f"Redis error: {str(e)}")
-        return False
-
-
-def invalidate_all_user_tokens(user_id: int) -> bool:
-    """Invalidate all refresh tokens for a user"""
-    try:
-        user_token_key = f"user:{user_id}:refresh_tokens"
-        tokens = redis_client.smembers(user_token_key)
-
-        # Delete each token
-        for token in tokens:
-            redis_client.delete(f"refresh_token:{token}")
-
-        # Delete the user's token set
-        redis_client.delete(user_token_key)
-        return True
-    except Exception as e:
-        print(f"Redis error: {str(e)}")
-        return False
-
-
-# ----- Security Functions -----
-
-def verify_password(plain_password, hashed_password):
-    # Convert inputs to bytes if they're not already
-    if isinstance(plain_password, str):
-        password_bytes = plain_password.encode('utf-8')
-    else:
-        password_bytes = plain_password
-
-    if isinstance(hashed_password, str):
-        hashed_bytes = hashed_password.encode('utf-8')
-    else:
-        hashed_bytes = hashed_password
-
-    # Verify the password
-    return bcrypt.checkpw(password_bytes, hashed_bytes)
-
-
-def get_password_hash(password):
-    # Convert password to bytes if it's not already
-    if isinstance(password, str):
-        password_bytes = password.encode('utf-8')
-    else:
-        password_bytes = password
-
-    # Generate a salt and hash the password
-    salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(password_bytes, salt)
-
-    # Return the hashed password as a string
-    return hashed_password.decode('utf-8')
-
-
-def authenticate_user(db: Session, username: str, password: str):
-    user = db.query(User).filter(User.username == username).first()
-    if not user or not verify_password(password, user.password):
-        return False
-    return user
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(UTC) + expires_delta
-    else:
-        expire = datetime.now(UTC) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, token_settings.secret_key, algorithm=token_settings.algorithm)
-    return encoded_jwt
-
-
-def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    to_encode.update({"token_type": "refresh"})
-
-    if expires_delta:
-        expire = datetime.now(UTC) + expires_delta
-    else:
-        expire = datetime.now(UTC) + timedelta(days=7)  # Default 7 days
-
-    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
-    encoded_jwt = jwt.encode(to_encode, token_settings.secret_key, algorithm=token_settings.algorithm)
-    return encoded_jwt, expire
-
-
-async def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-
-    user = db.query(User).filter(User.username == token_data.username).first()
-    if user is None:
-        raise credentials_exception
-    return user
-
-
-# ----- Chat Functions -----
-
-def get_user_conversations(db: Session, user_id: int, limit: int = 12, offset: int = 0):
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
-        desc(ConversationTitle.created_at)).offset(offset).limit(limit).all()
-
-
-def get_user_conversation_count(db: Session, user_id: int):
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).count()
-
-def get_user_conversation_newest(db: Session, user_id: int):
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
-        desc(ConversationTitle.created_at)).first()
-
-def get_one_conversation(db: Session, thread_id: str):
-    logging.info(f"get_one_conversation: {thread_id}")
-    return db.query(ConversationTitle).filter(ConversationTitle.thread_id == thread_id).first()
 
 
 def get_messages(thread_id: str):
@@ -349,6 +92,27 @@ def get_messages(thread_id: str):
         messages_list.append(message_state)
 
     return messages_list
+
+
+async def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.username == token_data.username).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 
 # ----- API Endpoints -----
@@ -493,26 +257,6 @@ async def refresh_access_token(
         raise credentials_exception
 
 
-def logout_operation(request: Request):
-    # Blacklist current access token
-    token = None
-    for auth in request.headers.getlist("Authorization"):
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-
-    if token:
-        try:
-            payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm],
-                                 options={"verify_exp": False})
-            exp = payload.get("exp")
-            if exp:
-                remaining = exp - datetime.now(UTC).timestamp()
-                if remaining > 0:
-                    add_to_blacklist(token, int(remaining))
-        except Exception as e:
-            print(f"Error blacklisting token: {str(e)}")
-
-
 @app.post("/logout")
 async def logout(
         request: Request,
@@ -606,12 +350,12 @@ async def validate_token(token: str = Depends(oauth2_scheme)):
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+
 @app.get("/conversation/newest", response_model=ConversationResponse)
 async def get_newest_conversation(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
-
     convo = get_user_conversation_newest(db, current_user.id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -626,6 +370,7 @@ async def get_newest_conversation(
         user_id=current_user.id,
     )
     return conversation
+
 
 @app.get("/conversations/count", response_model=dict)
 async def count_conversations(
@@ -661,11 +406,11 @@ async def list_conversations(
 async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGenerator[str, None]:
     try:
         # Send an initial event to establish the connection and provide thread_id
-        json_ret = json.dumps({"type": "connection_established", "content": "[START}" ,"thread_id": thread_id})
+        json_ret = json.dumps({"type": "connection_established", "content": "[START}", "thread_id": thread_id})
         yield f"data: {json_ret}\n\n"
 
         # Stream content from RAG
-        for token in rag.stream(query=query, thread_id = thread_id, user_id = user_id):
+        for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
             # Add thread_id to each token message
             message_data = {"type": "message", "content": token, "thread_id": thread_id}
             # Ensure the message is properly JSON escaped
@@ -684,14 +429,6 @@ async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGen
     # Send an end message with thread_id
     yield f"data: {json_ret}\n\n"
 
-def generate_unique_thread_id(db: Session) -> str:
-    new_thread_id = generate_thread_id()
-    while True:
-        # Check if conversation exists
-        convo = get_one_conversation(db, new_thread_id)
-        if not convo:
-            return new_thread_id
-        new_thread_id = generate_thread_id()
 
 @app.get("/conversations/stream")
 async def stream_messages(
@@ -729,8 +466,6 @@ async def stream_messages(
         media_type="text/event-stream",
         headers=headers
     )
-
-
 
 
 @app.get("/conversations/{thread_id}", response_model=ConversationResponse)
@@ -776,10 +511,6 @@ async def get_conversation_messages(
     messages = get_messages(thread_id)
     return messages
 
-
-def generate_thread_id() -> str:
-    new_thread_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"id_{new_thread_id}_{random.randint(0, 100000)}"
 
 
 
@@ -841,19 +572,23 @@ async def delete_conversation(
 
     return {"message": f"Conversation {thread_id} and all associated checkpoints deleted successfully"}
 
+
 frontend_path = Path('./rag/web/arxiv_ai_chat/dist')
 app.mount("/assets", StaticFiles(directory=frontend_path / "assets"), name="assets")
+
 
 # Serve other static files directly if they exist
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse(frontend_path / "favicon.ico")
 
+
 # Catch-all route to return index.html for SPA routing
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
     # Otherwise return index.html for SPA routing
     return FileResponse(frontend_path / "index.html")
+
 
 if __name__ == "__main__":
     import uvicorn

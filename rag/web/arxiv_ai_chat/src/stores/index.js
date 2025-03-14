@@ -288,6 +288,7 @@ export const useChatStore = defineStore('chat', {
     state: () => ({
         chats: [],
         activeChatId: null,
+        activeChatTitle: '',
         isLoadingConversations: false,
         isLoadingMessages: false,
         isSending: false,
