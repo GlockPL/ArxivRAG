@@ -156,38 +156,59 @@ export const useAuthStore = defineStore('auth', {
         async login(username, password) {
             this.isLoggingIn = true
             this.loginError = ''
-
+        
             try {
-                const formData = new FormData()
-                formData.append('username', username)
-                formData.append('password', password)
-
-                const response = await axios.post(`${API_BASE_URL}/token`, formData, {
+                // Use URLSearchParams instead of FormData for x-www-form-urlencoded
+                const params = new URLSearchParams()
+                params.append('username', username)
+                params.append('password', password)
+        
+                // Create an axios instance with custom settings for this specific request
+                const axiosInstance = axios.create({
+                    // Set validateStatus to return true for all status codes
+                    // This prevents axios from throwing errors for non-2xx responses
+                    validateStatus: status => true,
+                    // Set withCredentials to false to avoid CORS issues with redirects
+                    withCredentials: false
+                })
+        
+                const response = await axiosInstance.post(`${API_BASE_URL}/token`, params, {
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded'
                     }
                 })
-
-                this.authToken = response.data.access_token
-                this.refreshToken = response.data.refresh_token
-                this.username = username
-                this.isAuthenticated = true
-
-                localStorage.setItem('chatToken', this.authToken)
-                localStorage.setItem('chatRefreshToken', this.refreshToken)
-                localStorage.setItem('chatUsername', this.username)
-
-                return true
-            } catch (error) {
-                console.log('Login error:', error)
-                console.error('Login error:', error)
-
-                if (error.response && error.response.status === 401) {
-                    this.loginError = "Incorrect username or password"
+        
+                // Manually handle response status codes
+                if (response.status >= 200 && response.status < 300) {
+                    // Success response
+                    this.authToken = response.data.access_token
+                    this.refreshToken = response.data.refresh_token
+                    this.username = username
+                    this.isAuthenticated = true
+        
+                    try {
+                        localStorage.setItem('chatToken', this.authToken)
+                        localStorage.setItem('chatRefreshToken', this.refreshToken)
+                        localStorage.setItem('chatUsername', this.username)
+                    } catch (storageError) {
+                        console.warn('Unable to save to localStorage:', storageError)
+                    }
+        
+                    return true
                 } else {
-                    this.loginError = "Login failed. Please try again."
+                    // Error response - manually set error message based on status code
+                    if (response.status === 401) {
+                        this.loginError = "Incorrect username or password"
+                    } else {
+                        this.loginError = `Login failed. Error: ${response.status}`
+                        console.error('Login error details:', response.data)
+                    }
+                    return false
                 }
-
+            } catch (error) {
+                // This will only catch network errors, not HTTP status errors
+                console.error('Network error during login:', error)
+                this.loginError = "Network error. Please check your connection and try again."
                 return false
             } finally {
                 this.isLoggingIn = false

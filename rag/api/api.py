@@ -2,7 +2,6 @@ import json
 import logging
 import random
 import uuid
-import weaviate
 from pathlib import Path
 
 import bcrypt
