@@ -1,3 +1,6 @@
+"""
+Api file with routs
+"""
 import json
 import logging
 from pathlib import Path
@@ -17,12 +20,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from rag.api.models import MessageResponse, TokenData, UserResponse, UserCreate, Token, ConversationResponse, \
-    RefreshRequest
-from rag.api.utils import get_password_hash, authenticate_user, create_access_token, create_refresh_token, \
-    store_refresh_token, is_token_blacklisted, validate_refresh_token, invalidate_refresh_token, logout_operation, \
-    invalidate_all_user_tokens, get_user_conversation_newest, get_user_conversation_count, get_user_conversations, \
-    get_one_conversation, generate_unique_thread_id
+from rag.api.models import MessageResponse, TokenData, UserResponse, UserCreate, \
+    Token, ConversationResponse, RefreshRequest
+from rag.api.utils import get_password_hash, authenticate_user, create_access_token, \
+    create_refresh_token, store_refresh_token, is_token_blacklisted, validate_refresh_token, \
+    invalidate_refresh_token, logout_operation, invalidate_all_user_tokens, \
+    get_user_conversation_newest, get_user_conversation_count, get_user_conversations, \
+    get_one_conversation, generate_unique_thread_id, get_conversation_with_check
 from rag.settings import DBSettings, TokenSettings, Settings
 from rag.db.db_objects import User, LoginHistory, Base, CheckpointBlob, CheckpointWrite, Checkpoint
 from rag.rag_pipeline import RAG
@@ -31,8 +35,8 @@ db_settings = DBSettings()
 main_settings = Settings()
 token_settings = TokenSettings()
 
-postgres_db_uri = f"postgresql://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}?sslmode=disable"
-engine = create_engine(postgres_db_uri)
+POSTGRES_DB_URI = f"postgresql://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}?sslmode=disable"
+engine = create_engine(POSTGRES_DB_URI)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create tables if they don't exist
@@ -55,8 +59,10 @@ app.add_middleware(
 )
 
 
-# Dependency to get the database session
 def get_db():
+    """
+    Dependency to get the database session
+    """
     db = SessionLocal()
     try:
         yield db
@@ -69,6 +75,9 @@ user_message_queues: Dict[int, asyncio.Queue] = {}
 
 
 def get_messages(thread_id: str):
+    """
+    Return all ai/human messages for a chat conversation defined by thread_id
+    """
     config = {"configurable": {"thread_id": thread_id}}
 
     state_history = list(rag.get_state_history(config))
@@ -95,6 +104,9 @@ def get_messages(thread_id: str):
 
 
 async def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+    """
+    Return current logged in user
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -182,11 +194,7 @@ async def login_for_access_token(
     token_expires_seconds = int(refresh_token_expires.total_seconds())
     store_refresh_token(user.id, refresh_token, token_expires_seconds)
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    return Token(access_token=access_token, refresh_token=refresh_token, token_type="Bearer")
 
 
 @app.post("/refresh", response_model=Token)
@@ -247,11 +255,7 @@ async def refresh_access_token(
         token_expires_seconds = int(refresh_token_expires.total_seconds())
         store_refresh_token(user.id, new_refresh_token, token_expires_seconds)
 
-        return {
-            "access_token": new_access_token,
-            "refresh_token": new_refresh_token,
-            "token_type": "bearer"
-        }
+        return Token(access_token=new_access_token, refresh_token=new_refresh_token, token_type="Bearer")
 
     except JWTError:
         raise credentials_exception
@@ -357,19 +361,6 @@ async def get_newest_conversation(
         db: Session = Depends(get_db)
 ):
     convo = get_user_conversation_newest(db, current_user.id)
-    if not convo:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if convo.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
-
-    conversation = ConversationResponse(
-        thread_id=convo.thread_id,
-        title=convo.title,
-        created_at=convo.created_at,
-        user_id=current_user.id,
-    )
-    return conversation
 
 
 @app.get("/conversations/count", response_model=dict)
@@ -437,7 +428,7 @@ async def stream_messages(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
-    logging.info(f"I'm in conversation {thread_id}")
+    logging.info("I'm in conversation %s", thread_id)
     # Check if thread_id exists in database
     if thread_id:
         convo = get_one_conversation(db, thread_id)
@@ -474,23 +465,13 @@ async def get_conversation(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
+    """
+
+    """
     # Check if conversation exists and user has access
     convo = get_one_conversation(db, thread_id)
-    logging.info(f"I'm in conversation {thread_id}")
-    if not convo:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # In a real app with multiple participants, check if user is a participant
-    if convo.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
-
-    conversation = ConversationResponse(
-        thread_id=convo.thread_id,
-        title=convo.title,
-        created_at=convo.created_at,
-        user_id=current_user.id,
-    )
-    return conversation
+    logging.info("I'm in conversation %s", thread_id)
+    return get_conversation_with_check(convo, current_user)
 
 
 @app.get("/conversations/{thread_id}/messages", response_model=List[MessageResponse])
@@ -498,7 +479,10 @@ async def get_conversation_messages(
         thread_id: str,
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
-):
+) -> List[MessageResponse]:
+    """
+    Return all messages for a conversation.
+    """
     # Check if conversation exists and user has access
     convo = get_one_conversation(db, thread_id)
     if not convo:
@@ -512,9 +496,6 @@ async def get_conversation_messages(
     return messages
 
 
-
-
-
 @app.put("/conversations/{thread_id}", response_model=ConversationResponse)
 async def update_conversation_title(
         thread_id: str,
@@ -522,6 +503,9 @@ async def update_conversation_title(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
+    """
+    Modify conversation title
+    """
     # Check if conversation exists and user has access
     convo = get_one_conversation(db, thread_id)
     if not convo:
@@ -545,6 +529,9 @@ async def delete_conversation(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
+    """
+    Delete a conversation from 4 tables
+    """
     # Check if conversation exists and user has access
     convo = get_one_conversation(db, thread_id)
     if not convo:
@@ -580,13 +567,18 @@ app.mount("/assets", StaticFiles(directory=frontend_path / "assets"), name="asse
 # Serve other static files directly if they exist
 @app.get("/favicon.ico")
 async def favicon():
+    """
+    Return favicon image
+    """
     return FileResponse(frontend_path / "favicon.ico")
 
 
-# Catch-all route to return index.html for SPA routing
 @app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    # Otherwise return index.html for SPA routing
+async def serve_spa():
+    """
+    Catch-all route to return index.html for SPA routing
+    Otherwise return index.html for SPA routing
+    """
     return FileResponse(frontend_path / "index.html")
 
 

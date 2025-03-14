@@ -9,8 +9,9 @@ import redis
 from jose import jwt
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
-from fastapi import Request
+from fastapi import Request, HTTPException
 
+from rag.api.models import ConversationResponse
 from rag.db.db_objects import User, ConversationTitle
 from rag.settings import RedisSettings, TokenSettings
 
@@ -165,7 +166,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None)-> tuple[str, datetime]:
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> tuple[str, datetime]:
     """
     Generate a new refresh token by encoding username and expiration time
     """
@@ -257,3 +258,19 @@ def generate_unique_thread_id(db: Session) -> str:
         if not convo:
             return new_thread_id
         new_thread_id = generate_thread_id()
+
+
+def get_conversation_with_check(convo: ConversationTitle, current_user: User) -> ConversationResponse:
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if convo.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+
+    conversation = ConversationResponse(
+        thread_id=convo.thread_id,
+        title=convo.title,
+        created_at=convo.created_at,
+        user_id=current_user.id,
+    )
+    return conversation
