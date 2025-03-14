@@ -394,10 +394,10 @@ async def list_conversations(
     return convos
 
 
-async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGenerator[str, None]:
+async def stream_generator(query: str, thread_id: str, user_id: int, db: Session) -> AsyncGenerator[str, None]:
     try:
         # Send an initial event to establish the connection and provide thread_id
-        json_ret = json.dumps({"type": "connection_established", "content": "[START}", "thread_id": thread_id})
+        json_ret = json.dumps({"type": "connection_established", "content": "[START]", "thread_id": thread_id})
         yield f"data: {json_ret}\n\n"
 
         # Stream content from RAG
@@ -416,7 +416,8 @@ async def stream_generator(query: str, thread_id: str, user_id: int) -> AsyncGen
         error_msg = json.dumps({"type": "error", "content": str(e), "thread_id": thread_id})
         yield f"data: {error_msg}\n\n"
 
-    json_ret = json.dumps({"type": "streaming_finished", "content": "[DONE]", "thread_id": thread_id})
+    convo = get_one_conversation(db, thread_id)
+    json_ret = json.dumps({"type": "streaming_finished", "content": convo.title, "thread_id": thread_id})
     # Send an end message with thread_id
     yield f"data: {json_ret}\n\n"
 
@@ -453,7 +454,7 @@ async def stream_messages(
 
     # Return a StreamingResponse
     return StreamingResponse(
-        stream_generator(query, thread_id, current_user.id),
+        stream_generator(query, thread_id, current_user.id, db),
         media_type="text/event-stream",
         headers=headers
     )

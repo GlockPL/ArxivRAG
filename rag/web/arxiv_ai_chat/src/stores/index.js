@@ -537,6 +537,7 @@ export const useChatStore = defineStore('chat', {
                                 if (this.activeChat.id.startsWith('temp-')) {
                                     this.activeChat.id = parsedData.thread_id;                                    
                                     this.activeChatId = parsedData.thread_id;
+                                    this.activeChat.name = parsedData.content;
                                 }
                             }
 
