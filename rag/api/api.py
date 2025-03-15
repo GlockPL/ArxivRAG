@@ -14,6 +14,9 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from langchain_core.messages import HumanMessage, AIMessage
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -47,7 +50,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 rag = RAG()
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Chat API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Enable CORS
 app.add_middleware(
@@ -118,8 +124,8 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
         if username is None:
             raise credentials_exception
         token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
+    except JWTError as jwt_error:
+        raise credentials_exception from jwt_error
 
     user = db.query(User).filter(User.username == token_data.username).first()
     if user is None:
@@ -129,7 +135,8 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
 
 # ----- API Endpoints -----
 @app.post("/register", response_model=UserResponse)
-def register_user(user: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("4/hour")
+def register_user(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     # Check if username exists
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
@@ -155,10 +162,11 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @app.post("/token", response_model=Token)
+@limiter.limit("5/minute")
 async def login_for_access_token(
+        request: Request,
         form_data: OAuth2PasswordRequestForm = Depends(),
         db: Session = Depends(get_db),
-        in_request: Request = None
 ):
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
@@ -171,8 +179,8 @@ async def login_for_access_token(
     # Record login history
     login_record = LoginHistory(
         user_id=user.id,
-        ip_address=in_request.client.host if in_request else None,
-        user_agent=in_request.headers.get("user-agent") if in_request else None
+        ip_address=request.client.host if request else None,
+        user_agent=request.headers.get("user-agent") if request else None
     )
     db.add(login_record)
     db.commit()
@@ -198,10 +206,16 @@ async def login_for_access_token(
 
 
 @app.post("/refresh", response_model=Token)
+@limiter.limit("3/hour")
 async def refresh_access_token(
+        request: Request,
         refresh_data: RefreshRequest,
         db: Session = Depends(get_db)
 ):
+    """
+    Endpoint for refreshing an access token through refresh token
+    It also blacklists current refresh token and generates a new one
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid refresh token",
@@ -257,11 +271,12 @@ async def refresh_access_token(
 
         return Token(access_token=new_access_token, refresh_token=new_refresh_token, token_type="Bearer")
 
-    except JWTError:
-        raise credentials_exception
+    except JWTError as jwt_error:
+        raise credentials_exception from jwt_error
 
 
 @app.post("/logout")
+@limiter.limit("15/hour")
 async def logout(
         request: Request,
         refresh_token: str = None,
@@ -276,10 +291,14 @@ async def logout(
 
 
 @app.post("/logout-all")
+@limiter.limit("10/hour")
 async def logout_all_devices(
         request: Request,
         current_user: User = Depends(get_current_user)
 ):
+    """
+    Logout all devices.
+    """
     logout_operation(request)
     # Invalidate all refresh tokens for user
     invalidate_all_user_tokens(current_user.id)
@@ -288,7 +307,8 @@ async def logout_all_devices(
 
 
 @app.post("/validate-token")
-async def validate_token(token: str = Depends(oauth2_scheme)):
+@limiter.limit("30/minute")
+async def validate_token(request: Request, token: str = Depends(oauth2_scheme)):
     """
     Validates if a token is valid and not expired.
     This endpoint accepts the token via the Authorization header.
@@ -342,12 +362,12 @@ async def validate_token(token: str = Depends(oauth2_scheme)):
         finally:
             db.close()
 
-    except JWTError:
+    except JWTError as jwt_error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token expired or invalid",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from jwt_error
 
 
 @app.get("/users/me", response_model=UserResponse)
@@ -361,6 +381,7 @@ async def get_newest_conversation(
         db: Session = Depends(get_db)
 ):
     convo = get_user_conversation_newest(db, current_user.id)
+    return convo
 
 
 @app.get("/conversations/count", response_model=dict)
