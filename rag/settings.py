@@ -1,3 +1,6 @@
+"""
+File with settings
+"""
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -8,6 +11,9 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
+    """
+    General settings like api keys and model types
+    """
     google_api_key: str = Field("", alias='GOOGLE_API_KEY')
     openai_api_key: str = Field("", alias='OPENAI_API_KEY')
     model: str = Field("gemini-2.0-flash")
@@ -23,7 +29,9 @@ class Settings(BaseSettings):
 
 
 class DBSettings(BaseSettings):
-    # Postgresql settings
+    """
+    Settings for PostgreSQL database
+    """
     host: str = Field("localhost", alias="PG_HOST")
     database: str = Field("", alias='PG_USER')
     user: str = Field("", alias='PG_USER')
@@ -32,6 +40,9 @@ class DBSettings(BaseSettings):
 
 
 class LoginSettings(BaseSettings):
+    """
+    Settings for login and auth
+    """
     cookie_name: str = Field("", alias='COOKIE_NAME')
     auth_key: str = Field("", alias='AUTH_KEY')
     cookie_key: str = Field("", alias='COOKIE_KEY')
@@ -39,17 +50,26 @@ class LoginSettings(BaseSettings):
 
 
 class TokenSettings(BaseSettings):
+    """
+    Settings for token
+    """
     secret_key: str = Field("", alias='JWT_SECRET')
     algorithm: str = Field("HS256", alias='ALGORITHM')
     token_expires_minutes: int = Field(1, alias='ACCESS_TOKEN_EXPIRE_MINUTES')
     refresh_token_expires_days: int = Field(7, alias='REFRESH_TOKEN_EXPIRE_DAYS')
 
 class HostSettings(BaseSettings):
+    """
+    Settings for host values
+    """
     host: str = Field("localhost", alias='HOST')
     port: int = Field(8000, alias='PORT')
     http_type: str = Field("http", alias='TYPE')
 
 class RedisSettings(BaseSettings):
+    """
+    settings for redis server connection
+    """
     redis_password: str = Field("", alias='REDIS_PASSWORD')
     redis_host: str = Field("localhost", alias='REDIS_HOST')
     redis_port: int = Field(6379, alias='REDIS_PORT')
