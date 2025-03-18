@@ -137,7 +137,7 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
 # ----- API Endpoints -----
 @app.post("/register", response_model=UserResponse)
 @limiter.limit("4/hour")
-def register_user(user: UserCreate, request: Request, db: Session = Depends(get_db)):
+async def register_user(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     # Check if username exists
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
@@ -149,7 +149,7 @@ def register_user(user: UserCreate, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="Email already registered")
 
     # Create new user
-    hashed_password = get_password_hash(user.password)
+    hashed_password = await get_password_hash(user.password)
     db_user = User(
         username=user.username,
         email=user.email,

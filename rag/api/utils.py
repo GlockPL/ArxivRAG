@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import uuid
 from datetime import timedelta, datetime, UTC
 import random
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
 
 import bcrypt
 import redis
@@ -24,6 +26,8 @@ redis_client = redis.Redis(
     db=redis_settings.redis_db,
     decode_responses=True
 )
+
+_executor = ThreadPoolExecutor()
 
 
 # ----- Token Management in Redis -----
@@ -126,9 +130,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 
-def get_password_hash(password: str) -> str:
+
+async def get_password_hash(password: str) -> str:
     """
-    Compute a hashed password from a plain password
+    Compute a hashed password from a plain password (async version)
     """
     # Convert password to bytes if it's not already
     if isinstance(password, str):
@@ -136,12 +141,14 @@ def get_password_hash(password: str) -> str:
     else:
         password_bytes = password
 
-    # Generate a salt and hash the password
-    salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(password_bytes, salt)
+    # Run the CPU-bound bcrypt operations in a thread pool
+    def hash_password():
+        salt = bcrypt.gensalt()
+        hashed_password = bcrypt.hashpw(password_bytes, salt)
+        return hashed_password.decode('utf-8')
 
-    # Return the hashed password as a string
-    return hashed_password.decode('utf-8')
+    # Run in thread pool and await the result
+    return await asyncio.get_event_loop().run_in_executor(_executor, hash_password)
 
 
 def authenticate_user(db: Session, username: str, password: str):
