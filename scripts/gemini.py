@@ -22,7 +22,9 @@ def simple_compress_pdf(input_file):
     pdf = pymupdf.open(input_file)
     pdf.save(output_file,
              garbage=4,  # Clean up unused objects
-             deflate=True,  # Compress streams
+             deflate=True,# Compress streams
+             deflate_images=True,
+             deflate_fonts=True,
              pretty=False,  # No pretty printing
              linear=False,  # No linear format
              ascii=False)  # Allow binary format
