@@ -30,13 +30,14 @@ from rag.api.utils import get_password_hash, authenticate_user, create_access_to
     invalidate_refresh_token, logout_operation, invalidate_all_user_tokens, \
     get_user_conversation_newest, get_user_conversation_count, get_user_conversations, \
     get_one_conversation, generate_unique_thread_id, get_conversation_with_check
-from rag.settings import DBSettings, TokenSettings, Settings
+from rag.settings import DBSettings, TokenSettings, Settings, HostSettings
 from rag.db.db_objects import User, LoginHistory, Base, CheckpointBlob, CheckpointWrite, Checkpoint
 from rag.rag_pipeline import RAG
 
 db_settings = DBSettings()
 main_settings = Settings()
 token_settings = TokenSettings()
+host_settings = HostSettings()
 
 POSTGRES_DB_URI = f"postgresql://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}?sslmode=disable"
 engine = create_engine(POSTGRES_DB_URI)
@@ -58,7 +59,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=[f"{host_settings.http_type}://{host_settings.host}:{host_settings.port}"],  # Restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
