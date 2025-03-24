@@ -5,7 +5,8 @@ import json
 import logging
 from pathlib import Path
 from datetime import timedelta
-from typing import List, Dict, AsyncGenerator
+from typing import List, AsyncGenerator
+from contextlib import asynccontextmanager
 
 import asyncio
 
@@ -19,9 +20,8 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from langchain_core.messages import HumanMessage, AIMessage
 from jose import JWTError, jwt
-from sqlalchemy.orm import Session
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from rag.api.models import MessageResponse, TokenData, UserResponse, UserCreate, \
     Token, ConversationResponse, RefreshRequest
@@ -39,20 +39,35 @@ main_settings = Settings()
 token_settings = TokenSettings()
 host_settings = HostSettings()
 
-POSTGRES_DB_URI = f"postgresql://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}?sslmode=disable"
-engine = create_engine(POSTGRES_DB_URI)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Create tables if they don't exist
-Base.metadata.create_all(bind=engine)
+POSTGRES_DB_URI = f"postgresql+asyncpg://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}"
+engine = create_async_engine(POSTGRES_DB_URI, echo=False)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 rag = RAG()
 
+
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    # Startup: create tables before serving requests
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    yield  # This is where FastAPI serves requests
+
+    # Shutdown: cleanup resources
+    await engine.dispose()
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="Chat API")
+app = FastAPI(title="Chat API", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -66,22 +81,18 @@ app.add_middleware(
 )
 
 
-def get_db():
+async def get_db():
     """
     Dependency to get the database session
     """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 
 
-# In-memory message queue for streaming
-user_message_queues: Dict[int, asyncio.Queue] = {}
-
-
-def get_messages(thread_id: str):
+async def get_messages(thread_id: str):
     """
     Return all ai/human messages for a chat conversation defined by thread_id
     """
@@ -90,7 +101,11 @@ def get_messages(thread_id: str):
     state_history = list(rag.get_state_history(config))
     conversation = []
     messages_list = []
-    if len(state_history) > 0:
+
+    # Collect the state history by consuming the async iterator
+
+    if state_history:
+        # Assuming the first item contains the messages
         conversation = state_history[0][0]['messages']
 
     for message in conversation:
@@ -110,7 +125,7 @@ def get_messages(thread_id: str):
     return messages_list
 
 
-async def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
     """
     Return current logged in user
     """
@@ -128,7 +143,8 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
     except JWTError as jwt_error:
         raise credentials_exception from jwt_error
 
-    user = db.query(User).filter(User.username == token_data.username).first()
+    result = await db.execute(select(User).filter(User.username == token_data.username))
+    user = result.scalars().first()
     if user is None:
         raise credentials_exception
     return user
@@ -137,14 +153,16 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
 # ----- API Endpoints -----
 @app.post("/register", response_model=UserResponse)
 @limiter.limit("4/hour")
-async def register_user(user: UserCreate, request: Request, db: Session = Depends(get_db)):
+async def register_user(user: UserCreate, request: Request, db: AsyncSession = Depends(get_db)):
     # Check if username exists
-    db_user = db.query(User).filter(User.username == user.username).first()
+    result = await db.execute(select(User).filter(User.username == user.username))
+    db_user = result.scalars().first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
 
     # Check if email exists
-    db_user = db.query(User).filter(User.email == user.email).first()
+    result = await db.execute(select(User).filter(User.email == user.email))
+    db_user = result.scalars().first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -157,8 +175,8 @@ async def register_user(user: UserCreate, request: Request, db: Session = Depend
         password=hashed_password
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    await db.commit()
+    await db.refresh(db_user)
     return db_user
 
 
@@ -167,9 +185,9 @@ async def register_user(user: UserCreate, request: Request, db: Session = Depend
 async def login_for_access_token(
         request: Request,
         form_data: OAuth2PasswordRequestForm = Depends(),
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
 ):
-    user = authenticate_user(db, form_data.username, form_data.password)
+    user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -184,24 +202,24 @@ async def login_for_access_token(
         user_agent=request.headers.get("user-agent") if request else None
     )
     db.add(login_record)
-    db.commit()
+    await db.commit()
 
     # Create access token
     access_token_expires = timedelta(minutes=token_settings.token_expires_minutes)
-    access_token = create_access_token(
+    access_token = await create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
 
     # Create refresh token
     refresh_token_expires = timedelta(days=token_settings.refresh_token_expires_days)
-    refresh_token, expire_time = create_refresh_token(
+    refresh_token, expire_time = await create_refresh_token(
         data={"sub": user.username},
         expires_delta=refresh_token_expires
     )
 
     # Store refresh token in Redis
     token_expires_seconds = int(refresh_token_expires.total_seconds())
-    store_refresh_token(user.id, refresh_token, token_expires_seconds)
+    await store_refresh_token(user.id, refresh_token, token_expires_seconds)
 
     return Token(access_token=access_token, refresh_token=refresh_token, token_type="Bearer")
 
@@ -211,7 +229,7 @@ async def login_for_access_token(
 async def refresh_access_token(
         request: Request,
         refresh_data: RefreshRequest,
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
     """
     Endpoint for refreshing an access token through refresh token
@@ -240,35 +258,36 @@ async def refresh_access_token(
             raise credentials_exception
 
         # Get user from database
-        user = db.query(User).filter(User.username == username).first()
+        result = await db.execute(select(User).filter(User.username == username))
+        user = result.scalars().first()
         if user is None:
             raise credentials_exception
 
         # Validate token exists in Redis
-        user_id = validate_refresh_token(refresh_token)
+        user_id = await validate_refresh_token(refresh_token)
         if user_id is None or user_id != user.id:
             raise credentials_exception
 
         # Invalidate the used refresh token (one-time use)
-        invalidate_refresh_token(refresh_token)
+        await invalidate_refresh_token(refresh_token)
 
         # Create new access token
         access_token_expires = timedelta(minutes=token_settings.token_expires_minutes)
-        new_access_token = create_access_token(
+        new_access_token = await create_access_token(
             data={"sub": username},
             expires_delta=access_token_expires
         )
 
         # Create new refresh token
         refresh_token_expires = timedelta(days=token_settings.refresh_token_expires_days)
-        new_refresh_token, expire_time = create_refresh_token(
+        new_refresh_token, expire_time = await create_refresh_token(
             data={"sub": username},
             expires_delta=refresh_token_expires
         )
 
         # Store new refresh token
         token_expires_seconds = int(refresh_token_expires.total_seconds())
-        store_refresh_token(user.id, new_refresh_token, token_expires_seconds)
+        await store_refresh_token(user.id, new_refresh_token, token_expires_seconds)
 
         return Token(access_token=new_access_token, refresh_token=new_refresh_token, token_type="Bearer")
 
@@ -282,11 +301,11 @@ async def logout(
         request: Request,
         refresh_token: str = None,
 ):
-    logout_operation(request)
+    await logout_operation(request)
 
     # Invalidate refresh token if provided
     if refresh_token:
-        invalidate_refresh_token(refresh_token)
+        await invalidate_refresh_token(refresh_token)
 
     return {"detail": "Successfully logged out"}
 
@@ -300,23 +319,23 @@ async def logout_all_devices(
     """
     Logout all devices.
     """
-    logout_operation(request)
+    await logout_operation(request)
     # Invalidate all refresh tokens for user
-    invalidate_all_user_tokens(current_user.id)
+    await invalidate_all_user_tokens(current_user.id)
 
     return {"detail": "Successfully logged out from all devices"}
 
 
 @app.post("/validate-token")
 @limiter.limit("30/minute")
-async def validate_token(request: Request, token: str = Depends(oauth2_scheme)):
+async def validate_token(request: Request, token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     """
     Validates if a token is valid and not expired.
     This endpoint accepts the token via the Authorization header.
     Returns the username if valid, otherwise throws an authentication error.
     """
     # Check if token is blacklisted
-    if is_token_blacklisted(token):
+    if await is_token_blacklisted(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has been revoked",
@@ -343,25 +362,22 @@ async def validate_token(request: Request, token: str = Depends(oauth2_scheme)):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Verify the user exists
-        db = SessionLocal()
-        try:
-            user = db.query(User).filter(User.username == username).first()
-            if user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="User not found",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+        result = await db.execute(select(User).filter(User.username == username))
+        user = result.scalars().first()
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-            # Return basic user info
-            return {
-                "valid": True,
-                "username": username,
-                "user_id": user.id
-            }
-        finally:
-            db.close()
+        # Return basic user info
+        return {
+            "valid": True,
+            "username": username,
+            "user_id": user.id
+        }
+
 
     except JWTError as jwt_error:
         raise HTTPException(
@@ -379,18 +395,18 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 @app.get("/conversation/newest", response_model=ConversationResponse)
 async def get_newest_conversation(
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
-    convo = get_user_conversation_newest(db, current_user.id)
+    convo = await get_user_conversation_newest(db, current_user.id)
     return convo
 
 
 @app.get("/conversations/count", response_model=dict)
 async def count_conversations(
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
-    count = get_user_conversation_count(db, current_user.id)
+    count = await get_user_conversation_count(db, current_user.id)
     return {"total": count}
 
 
@@ -399,9 +415,9 @@ async def list_conversations(
         limit: int = Query(10, ge=1, le=100, description="Number of conversations to return"),
         offset: int = Query(0, ge=0, description="Number of conversations to skip"),
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
-    user_convos = get_user_conversations(db, current_user.id, limit, offset)
+    user_convos = await get_user_conversations(db, current_user.id, limit, offset)
 
     convos = []
     for convo in user_convos:
@@ -416,7 +432,7 @@ async def list_conversations(
     return convos
 
 
-async def stream_generator(query: str, thread_id: str, user_id: int, db: Session) -> AsyncGenerator[str, None]:
+async def stream_generator(query: str, thread_id: str, user_id: int, db: AsyncSession) -> AsyncGenerator[str, None]:
     try:
         # Send an initial event to establish the connection and provide thread_id
         json_ret = json.dumps({"type": "connection_established", "content": "[START]", "thread_id": thread_id})
@@ -438,7 +454,7 @@ async def stream_generator(query: str, thread_id: str, user_id: int, db: Session
         error_msg = json.dumps({"type": "error", "content": str(e), "thread_id": thread_id})
         yield f"data: {error_msg}\n\n"
 
-    convo = get_one_conversation(db, thread_id)
+    convo = await get_one_conversation(db, thread_id)
     json_ret = json.dumps({"type": "streaming_finished", "content": convo.title, "thread_id": thread_id})
     # Send an end message with thread_id
     yield f"data: {json_ret}\n\n"
@@ -449,21 +465,21 @@ async def stream_messages(
         query: str,
         thread_id: str = None,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
     logging.info("I'm in conversation %s", thread_id)
     # Check if thread_id exists in database
     if thread_id:
-        convo = get_one_conversation(db, thread_id)
+        convo = await get_one_conversation(db, thread_id)
         if not convo:
             # Thread ID was provided but doesn't exist, generate a new one
-            thread_id = generate_unique_thread_id(db)
+            thread_id = await generate_unique_thread_id(db)
         elif convo.user_id != current_user.id:
             # Thread exists but belongs to another user
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
     else:
         # No thread_id provided, generate a new one
-        thread_id = generate_unique_thread_id(db)
+        thread_id = await generate_unique_thread_id(db)
 
     # Set response headers
     headers = {
@@ -486,28 +502,29 @@ async def stream_messages(
 async def get_conversation(
         thread_id: str,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
     """
 
     """
     # Check if conversation exists and user has access
-    convo = get_one_conversation(db, thread_id)
+    convo = await get_one_conversation(db, thread_id)
     logging.info("I'm in conversation %s", thread_id)
-    return get_conversation_with_check(convo, current_user)
+    conv_response = await get_conversation_with_check(convo, current_user)
+    return conv_response
 
 
 @app.get("/conversations/{thread_id}/messages", response_model=List[MessageResponse])
 async def get_conversation_messages(
         thread_id: str,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ) -> List[MessageResponse]:
     """
     Return all messages for a conversation.
     """
     # Check if conversation exists and user has access
-    convo = get_one_conversation(db, thread_id)
+    convo = await get_one_conversation(db, thread_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -515,7 +532,7 @@ async def get_conversation_messages(
         raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
     # Get messages
-    messages = get_messages(thread_id)
+    messages = await get_messages(thread_id)
     return messages
 
 
@@ -524,13 +541,13 @@ async def update_conversation_title(
         thread_id: str,
         title: str,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
     """
     Modify conversation title
     """
     # Check if conversation exists and user has access
-    convo = get_one_conversation(db, thread_id)
+    convo = await get_one_conversation(db, thread_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -540,8 +557,8 @@ async def update_conversation_title(
 
     # Update the title
     convo.title = title
-    db.commit()
-    db.refresh(convo)
+    await db.commit()
+    await db.refresh(convo)
 
     return convo
 
@@ -550,13 +567,13 @@ async def update_conversation_title(
 async def delete_conversation(
         thread_id: str,
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a conversation from 4 tables
     """
     # Check if conversation exists and user has access
-    convo = get_one_conversation(db, thread_id)
+    convo = await get_one_conversation(db, thread_id)
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -566,19 +583,22 @@ async def delete_conversation(
 
     # Delete all checkpoint data related to this thread_id
     # Start with checkpoint_blobs
-    db.query(CheckpointBlob).filter(CheckpointBlob.thread_id == thread_id).delete()
+    stmt = delete(CheckpointBlob).where(CheckpointBlob.thread_id == thread_id)
+    await db.execute(stmt)
 
     # Delete checkpoint_writes
-    db.query(CheckpointWrite).filter(CheckpointWrite.thread_id == thread_id).delete()
+    stmt = delete(CheckpointWrite).where(CheckpointWrite.thread_id == thread_id)
+    await db.execute(stmt)
 
     # Delete checkpoints
-    db.query(Checkpoint).filter(Checkpoint.thread_id == thread_id).delete()
+    stmt = delete(Checkpoint).where(Checkpoint.thread_id == thread_id)
+    await db.execute(stmt)
 
     # Finally delete the conversation itself
-    db.delete(convo)
+    await db.delete(convo)
 
     # Commit all changes
-    db.commit()
+    await db.commit()
 
     return {"message": f"Conversation {thread_id} and all associated checkpoints deleted successfully"}
 

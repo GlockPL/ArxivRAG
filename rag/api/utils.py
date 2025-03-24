@@ -7,10 +7,10 @@ from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 
 import bcrypt
-import redis
+import redis.asyncio as redis
 from jose import jwt
-from sqlalchemy import desc
-from sqlalchemy.orm import Session
+from sqlalchemy import desc, select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Request, HTTPException
 
 from rag.api.models import ConversationResponse
@@ -32,43 +32,44 @@ _executor = ThreadPoolExecutor()
 
 # ----- Token Management in Redis -----
 
-def add_to_blacklist(token: str, expires_in: int):
+async def add_to_blacklist(token: str, expires_in: int):
     """Add a token to the blacklist (used tokens)"""
     try:
-        redis_client.setex(f"bl_token:{token}", expires_in, "1")
+        await redis_client.setex(f"bl_token:{token}", expires_in, "1")
         return True
     except Exception as e:
         print(f"Redis error: {str(e)}")
         return False
 
 
-def is_token_blacklisted(token: str) -> bool:
+async def is_token_blacklisted(token: str) -> bool:
     """Check if a token is blacklisted"""
     try:
-        return bool(redis_client.exists(f"bl_token:{token}"))
+        is_token_b_listed = await redis_client.exists(f"bl_token:{token}")
+        return bool(is_token_b_listed)
     except Exception as e:
         print(f"Redis error: {str(e)}")
         return False
 
 
-def store_refresh_token(user_id: int, token: str, expires_in: int):
-    """Store a refresh token for a user"""
+async def store_refresh_token(user_id: int, token: str, expires_in: int):
+    """Store a refresh token for a user (async version)"""
     try:
         # Create user's token set if it doesn't exist
         user_token_key = f"user:{user_id}:refresh_tokens"
-        redis_client.sadd(user_token_key, token)
+        await redis_client.sadd(user_token_key, token)
         # Set expiration for this specific token
-        redis_client.setex(f"refresh_token:{token}", expires_in, str(user_id))
+        await redis_client.setex(f"refresh_token:{token}", expires_in, str(user_id))
         return True
     except Exception as e:
         print(f"Redis error: {str(e)}")
         return False
 
 
-def validate_refresh_token(token: str) -> Optional[int]:
+async def validate_refresh_token(token: str) -> Optional[int]:
     """Validate a refresh token and return the user ID if valid"""
     try:
-        user_id = redis_client.get(f"refresh_token:{token}")
+        user_id = await redis_client.get(f"refresh_token:{token}")
         if user_id:
             return int(user_id)
         return None
@@ -77,23 +78,23 @@ def validate_refresh_token(token: str) -> Optional[int]:
         return None
 
 
-def invalidate_refresh_token(token: str) -> bool:
+async def invalidate_refresh_token(token: str) -> bool:
     """Invalidate a single refresh token"""
     try:
         # Get user ID associated with this token
         user_id = redis_client.get(f"refresh_token:{token}")
         if user_id:
             # Remove token from user's set
-            redis_client.srem(f"user:{user_id}:refresh_tokens", token)
+            await redis_client.srem(f"user:{user_id}:refresh_tokens", token)
         # Delete the token itself
-        redis_client.delete(f"refresh_token:{token}")
+        await redis_client.delete(f"refresh_token:{token}")
         return True
     except Exception as e:
         print(f"Redis error: {str(e)}")
         return False
 
 
-def invalidate_all_user_tokens(user_id: int) -> bool:
+async def invalidate_all_user_tokens(user_id: int) -> bool:
     """Invalidate all refresh tokens for a user"""
     try:
         user_token_key = f"user:{user_id}:refresh_tokens"
@@ -101,10 +102,10 @@ def invalidate_all_user_tokens(user_id: int) -> bool:
 
         # Delete each token
         for token in tokens:
-            redis_client.delete(f"refresh_token:{token}")
+            await redis_client.delete(f"refresh_token:{token}")
 
         # Delete the user's token set
-        redis_client.delete(user_token_key)
+        await redis_client.delete(user_token_key)
         return True
     except Exception as e:
         print(f"Redis error: {str(e)}")
@@ -151,15 +152,16 @@ async def get_password_hash(password: str) -> str:
     return await asyncio.get_event_loop().run_in_executor(_executor, hash_password)
 
 
-def authenticate_user(db: Session, username: str, password: str):
+async def authenticate_user(db: AsyncSession, username: str, password: str):
     """Authenticate a user"""
-    user = db.query(User).filter(User.username == username).first()
+    result = await db.execute(select(User).filter(User.username == username))
+    user = result.scalars().first()
     if not user or not verify_password(password, user.password):
         return False
     return user
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+async def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """
     Generate access token by encoding username and expiration time
     """
@@ -173,7 +175,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> tuple[str, datetime]:
+async def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> tuple[str, datetime]:
     """
     Generate a new refresh token by encoding username and expiration time
     """
@@ -190,7 +192,7 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) 
     return encoded_jwt, expire
 
 
-def logout_operation(request: Request):
+async def logout_operation(request: Request):
     """
     Logout user by blacklisting refresh token
     """
@@ -208,42 +210,65 @@ def logout_operation(request: Request):
             if exp:
                 remaining = exp - datetime.now(UTC).timestamp()
                 if remaining > 0:
-                    add_to_blacklist(token, int(remaining))
+                    await add_to_blacklist(token, int(remaining))
         except Exception as e:
             print(f"Error blacklisting token: {str(e)}")
 
 
 # ----- Chat Functions -----
 
-def get_user_conversations(db: Session, user_id: int, limit: int = 12, offset: int = 0):
+async def get_user_conversations(db: AsyncSession, user_id: int, limit: int = 12, offset: int = 0):
     """
     Get conversations for a user, paginated by limit and offset, conversation are returned from newest to oldest
     """
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
-        desc(ConversationTitle.created_at)).offset(offset).limit(limit).all()
+    query = select(ConversationTitle).filter(
+        ConversationTitle.user_id == user_id
+    ).order_by(
+        desc(ConversationTitle.created_at)
+    ).offset(offset).limit(limit)
+
+    result = await db.execute(query)
+    return result.scalars().all()
 
 
-def get_user_conversation_count(db: Session, user_id: int):
+async def get_user_conversation_count(db: AsyncSession, user_id: int):
     """
     Counts all conversations for a user
     """
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).count()
+    query = select(func.count()).select_from(ConversationTitle).filter(
+        ConversationTitle.user_id == user_id
+    )
+
+    result = await db.execute(query)
+    return result.scalar_one()
 
 
-def get_user_conversation_newest(db: Session, user_id: int):
+async def get_user_conversation_newest(db: AsyncSession, user_id: int):
     """
     Returns newest conversations for a user
     """
-    return db.query(ConversationTitle).filter(ConversationTitle.user_id == user_id).order_by(
-        desc(ConversationTitle.created_at)).first()
+    query = select(ConversationTitle).filter(
+        ConversationTitle.user_id == user_id
+    ).order_by(
+        desc(ConversationTitle.created_at)
+    )
+
+    result = await db.execute(query)
+    return result.scalars().first()
 
 
-def get_one_conversation(db: Session, thread_id: str):
+async def get_one_conversation(db: AsyncSession, thread_id: str):
     """
     Get one conversation by thread_id
     """
     logging.info(f"get_one_conversation: {thread_id}")
-    return db.query(ConversationTitle).filter(ConversationTitle.thread_id == thread_id).first()
+
+    query = select(ConversationTitle).filter(
+        ConversationTitle.thread_id == thread_id
+    )
+
+    result = await db.execute(query)
+    return result.scalars().first()
 
 
 def generate_thread_id() -> str:
@@ -254,20 +279,20 @@ def generate_thread_id() -> str:
     return f"id_{new_thread_id}_{random.randint(0, 100000)}"
 
 
-def generate_unique_thread_id(db: Session) -> str:
+async def generate_unique_thread_id(db: AsyncSession) -> str:
     """
     Generate unique thread_id by randomly generating thread_id
     """
     new_thread_id = generate_thread_id()
     while True:
         # Check if conversation exists
-        convo = get_one_conversation(db, new_thread_id)
+        convo = await get_one_conversation(db, new_thread_id)
         if not convo:
             return new_thread_id
         new_thread_id = generate_thread_id()
 
 
-def get_conversation_with_check(convo: ConversationTitle, current_user: User) -> ConversationResponse:
+async def get_conversation_with_check(convo: ConversationTitle, current_user: User) -> ConversationResponse:
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
