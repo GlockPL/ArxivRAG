@@ -1,6 +1,19 @@
 ---
 
 services:
+  reverse-proxy:
+    image: traefik:v2.11
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - rag_network
+
   weaviate:
     command:
     - --host
@@ -61,8 +74,8 @@ services:
       dockerfile: ./Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
-    ports:
-      - "80:8000"
+    expose:
+      - "8000"
     command:
       - uvicorn
       - rag.api.api:app
@@ -87,6 +100,11 @@ services:
       WEAVIATE_HOST: ${WEAVIATE_HOST}
       HOST: ${HOST}
       PORT: ${PORT}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.app.rule=Host(`${HOST}`)"
+      - "traefik.http.routers.app.entrypoints=web"
+      - "traefik.http.services.app.loadbalancer.server.port=8000"
     networks:
       - rag_network
 
