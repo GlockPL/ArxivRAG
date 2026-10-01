@@ -4,6 +4,8 @@ import axios from 'axios'
 import { renderMarkdown } from '@/utils/markdownProcessor'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// Close a chat stream if the server sends nothing for this long
+const STREAM_IDLE_TIMEOUT_MS = 120000
 
 // Set up axios interceptors
 // Setup axios interceptors for authentication
@@ -17,90 +19,64 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error)
 })
 
-// Create a flag to prevent multiple refresh attempts at once
-let isRefreshing = false
-// Store for the requests that failed due to token expiration
-let failedQueue = []
+// Refresh tokens are single use, so all callers share one in-flight refresh request
+let refreshPromise = null
 
-// Process the failed queue
-const processQueue = (error, token = null) => {
-    failedQueue.forEach(prom => {
-        if (error) {
-            prom.reject(error)
-        } else {
-            prom.resolve(token)
-        }
-    })
-    failedQueue = []
-}
-
-// Enhanced response interceptor for token refresh
-axios.interceptors.response.use(response => {
-    return response
-}, async error => {
-    const originalRequest = error.config
-
-    // If the error is 401 and we haven't tried to refresh the token yet
-    if (error.response && error.response.status === 401 && !originalRequest._retry) {
-        if (isRefreshing) {
-            // If we're already refreshing, queue this request
-            return new Promise((resolve, reject) => {
-                failedQueue.push({ resolve, reject })
-            }).then(token => {
-                originalRequest.headers['Authorization'] = `Bearer ${token}`
-                return axios(originalRequest)
-            }).catch(err => {
-                return Promise.reject(err)
-            })
-        }
-
-        // Mark that we're trying to refresh
-        originalRequest._retry = true
-        isRefreshing = true
-
-        // Try to refresh the token
+const refreshTokens = () => {
+    if (!refreshPromise) {
         const refreshToken = localStorage.getItem('chatRefreshToken')
+        const request = refreshToken
+            ? axios.post(`${API_BASE_URL}/refresh`, { refresh_token: refreshToken })
+            : Promise.reject(new Error('No refresh token available'))
 
-        if (!refreshToken) {
-            // No refresh token available, logout
-            const authStore = useAuthStore()
-            authStore.logout()
-            processQueue(new Error('No refresh token available'))
-            isRefreshing = false
-            return Promise.reject(error)
-        }
-
-        try {
-            // Call the refresh token endpoint
-            const response = await axios.post(`${API_BASE_URL}/refresh`, { refresh_token: refreshToken })
-
-            // Update tokens in localStorage
+        refreshPromise = request.then(response => {
             const { access_token, refresh_token } = response.data
             localStorage.setItem('chatToken', access_token)
             localStorage.setItem('chatRefreshToken', refresh_token)
 
-            // Update auth headers for the original request
-            originalRequest.headers['Authorization'] = `Bearer ${access_token}`
+            const authStore = useAuthStore()
+            authStore.authToken = access_token
+            authStore.refreshToken = refresh_token
 
-            // Process any queued requests
-            processQueue(null, access_token)
+            return access_token
+        }).finally(() => {
+            refreshPromise = null
+        })
+    }
+    return refreshPromise
+}
 
-            // Reset refreshing flag
-            isRefreshing = false
+// True if the JWT is expired or expires within the next 30 seconds
+const tokenExpiresSoon = (token) => {
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+        return payload.exp * 1000 < Date.now() + 30000
+    } catch (e) {
+        return true
+    }
+}
 
-            // Retry the original request
+// Auth endpoints must not trigger a refresh, or a failing /refresh would try to refresh itself
+const AUTH_ENDPOINTS = ['/token', '/refresh', '/logout']
+
+// Response interceptor for token refresh
+axios.interceptors.response.use(response => {
+    return response
+}, async error => {
+    const originalRequest = error.config
+    const isAuthEndpoint = AUTH_ENDPOINTS.some(endpoint => originalRequest?.url?.endsWith(endpoint))
+
+    // If the error is 401 and we haven't tried to refresh the token yet
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
+        originalRequest._retry = true
+
+        try {
+            const accessToken = await refreshTokens()
+            originalRequest.headers['Authorization'] = `Bearer ${accessToken}`
             return axios(originalRequest)
         } catch (refreshError) {
             // Refresh token failed, logout
-            const authStore = useAuthStore()
-            authStore.logout()
-
-            // Process queued requests with the error
-            processQueue(refreshError)
-
-            // Reset refreshing flag
-            isRefreshing = false
-
+            useAuthStore().logout()
             return Promise.reject(refreshError)
         }
     }
@@ -243,27 +219,25 @@ export const useAuthStore = defineStore('auth', {
 
         // Method to manually refresh the token
         async refreshAccessToken() {
-            if (!this.refreshToken) {
-                throw new Error('No refresh token available')
-            }
-
             try {
-                const response = await axios.post(`${API_BASE_URL}/refresh`, {
-                    refresh_token: this.refreshToken
-                })
-
-                this.authToken = response.data.access_token
-                this.refreshToken = response.data.refresh_token
-
-                localStorage.setItem('chatToken', this.authToken)
-                localStorage.setItem('chatRefreshToken', this.refreshToken)
-
+                await refreshTokens()
                 return true
             } catch (error) {
                 console.error('Token refresh error:', error)
                 this.logout()
                 return false
             }
+        },
+
+        // Return a valid access token, refreshing it first if it is about to expire.
+        // Needed for requests that bypass the axios interceptor, like the SSE stream.
+        async getFreshToken() {
+            const token = localStorage.getItem('chatToken')
+            if (token && !tokenExpiresSoon(token)) {
+                return token
+            }
+            await refreshTokens()
+            return localStorage.getItem('chatToken')
         }
     },
 
@@ -364,14 +338,23 @@ export const useChatStore = defineStore('chat', {
             this.openMenuId = null
             this.activeChatId = id
 
-            if (id && !id.startsWith('temp-')) {
+            // Only load history once; refetching would replace a message that is still streaming in
+            const chat = this.chats.find(c => c.id === id)
+            if (chat && !id.startsWith('temp-') && chat.messages.length === 0) {
                 this.fetchMessages(id)
             }
         },
 
         async createNewChat() {
             try {
-                const newChatId = 'temp-id'
+                // Reuse an existing empty new chat instead of stacking several of them
+                const emptyChat = this.chats.find(c => c.id.startsWith('temp-') && c.messages.length === 0)
+                if (emptyChat) {
+                    this.setActiveChat(emptyChat.id)
+                    return
+                }
+
+                const newChatId = `temp-${Date.now()}`
                 const newChat = {
                     id: newChatId,
                     name: `New Chat`,
@@ -381,14 +364,15 @@ export const useChatStore = defineStore('chat', {
                     editingName: `New Chat`
                 }
 
-                if (this.paginationOffset === 0) {
-                    this.chats.unshift(newChat)
-                    if (this.chats.length > this.paginationLimit) {
-                        this.chats.pop()
-                    }
-                } else {
+                // New chats always appear on the first page
+                if (this.paginationOffset !== 0) {
                     this.paginationOffset = 0
                     await this.fetchConversations()
+                }
+
+                this.chats.unshift(newChat)
+                if (this.chats.length > this.paginationLimit) {
+                    this.chats.pop()
                 }
 
                 this.setActiveChat(newChatId)
@@ -398,234 +382,120 @@ export const useChatStore = defineStore('chat', {
         },
 
         async sendMessage(messageText) {
-            if (!messageText.trim() || !this.activeChat) return
+            if (!messageText.trim() || !this.activeChat || this.isSending) return
 
             this.newMessage = ""
 
-            const userMessage = {
+            // Keep a reference to the chat the stream belongs to, even if the user switches chats meanwhile
+            const chat = this.activeChat
+
+            chat.messages.push({
                 content: messageText,
                 type: 'human',
-                thread_id: this.activeChat.id
-            }
-
-            this.activeChat.messages.push(userMessage)
-
-            // Create a new reactive message object
-            const aiMessage = {
-                content: "<div class='thinking'><div class='dot-spinner'></div><span>Thinking...</span></div>",
+                thread_id: chat.id
+            })
+            chat.messages.push({
+                content: '',
                 type: 'ai',
-                thread_id: this.activeChat.id,
-                isStreaming: true,
-                rawContent: ""
-            }
-
-            this.activeChat.messages.push(aiMessage)
-
+                thread_id: chat.id,
+                isStreaming: true
+            })
+            // Take the reactive proxy from the array, mutating the plain object would not re-render
+            const aiMessage = chat.messages[chat.messages.length - 1]
 
             this.isSending = true
 
-            try {
-                const encodedQuery = encodeURIComponent(messageText)
-                const streamUrl = `${API_BASE_URL}/conversations/stream?query=${encodedQuery}&thread_id=${this.activeChat.id}`
+            let es = null
+            let timeoutId = null
 
-                // Create EventSource with custom headers using the fetch option
-                const es = new EventSource(streamUrl, {
+            const finish = (errorText = null) => {
+                clearTimeout(timeoutId)
+                if (es) es.close()
+                if (errorText) {
+                    aiMessage.content += `${aiMessage.content ? '\n\n' : ''}**Error:** ${errorText}`
+                }
+                aiMessage.isStreaming = false
+                this.isSending = false
+            }
+
+            // Give up if the server sends nothing for this long; restarted on every received event
+            const armIdleTimeout = () => {
+                clearTimeout(timeoutId)
+                timeoutId = setTimeout(() => finish('Response timed out. Please try again.'), STREAM_IDLE_TIMEOUT_MS)
+            }
+
+            try {
+                // EventSource bypasses the axios interceptor, so make sure the token is fresh up front
+                const token = await useAuthStore().getFreshToken()
+                const params = new URLSearchParams({ query: messageText, thread_id: chat.id })
+
+                es = new EventSource(`${API_BASE_URL}/conversations/stream?${params}`, {
                     fetch: (input, init) =>
                         fetch(input, {
                             ...init,
                             headers: {
                                 ...init.headers,
-                                'Authorization': `Bearer ${useAuthStore().authToken}`,
-                                'Accept': 'text/event-stream',
-                                'Cache-Control': 'no-cache'
+                                'Authorization': `Bearer ${token}`
                             }
                         })
                 })
+                armIdleTimeout()
 
-                let isFirstChunk = true
-                let currentActiveChatId = this.activeChat.id
-
-                // Store a reference to the message index for faster lookups
-                const messageIndex = this.activeChat.messages.length - 1
-
-                // Monitor for chat ID changes
-                const checkForChatChange = () => {
-                    if (this.activeChatId !== currentActiveChatId) {
-                        console.log('Chat changed - cleaning up stream')
-                        cleanup()
-                        return true
-                    }
-                    return false
-                }
-
-                // Process content to ensure it's a string and handle potential JSON objects
-                const processContent = (content) => {
-                    if (typeof content === 'object') {
-                        try {
-                            return JSON.stringify(content); // Convert object to string
-                        } catch (e) {
-                            return String(content); // Fallback to string conversion
-                        }
-                    }
-                    return content; // Already a string
-                };
-
-                // Process markdown on each update if needed
-                const processMarkdown = (text) => {
-                    // If your app has a markdown processor, call it here
-                    // For example: return markdownProcessor.render(text);
-                    return renderMarkdown(text);
-                };
-
-                // Handle incoming messages
                 es.addEventListener('message', (event) => {
-                    // Check if chat has changed
-                    if (checkForChatChange()) return;
-                
-                    const data = event.data;
-                    let parsedData;
-                
+                    let parsedData
                     try {
-                        parsedData = JSON.parse(data);
+                        parsedData = JSON.parse(event.data)
                     } catch (e) {
-                        console.error("Error parsing JSON:", e);
-                        return;
+                        console.error("Error parsing JSON:", e)
+                        return
                     }
-                    const messageIndex = this.activeChat.messages.length - 1;
-                    
-                    // Handle different message types
+                    armIdleTimeout()
+
                     switch (parsedData.type) {
                         case "connection_established":
-                            console.log("Connection established");
-                            break;
-                            
+                            break
+
                         case "message":
-                            // Update the AI message with new content
-                            if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                                const currentMsg = this.activeChat.messages[messageIndex];
-                                
-                                if (isFirstChunk) {
-                                    // For first chunk, replace the entire content
-                                    currentMsg.rawContent = parsedData.content;
-                                    currentMsg.content = renderMarkdown(parsedData.content);
-                                    isFirstChunk = false;
-                                } else {
-                                    // For subsequent chunks, append
-                                    currentMsg.rawContent += parsedData.content;
-                                    currentMsg.content = renderMarkdown(currentMsg.rawContent);
-                                }
-                            }
-                            break;
-                            
+                            aiMessage.content += parsedData.content
+                            break
+
                         case "streaming_finished":
-                            console.log("Streaming finished");                            
-                            if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                                this.activeChat.messages[messageIndex].isStreaming = false;
-                            }
-                            es.close();
-                            this.isSending = false;
+                            finish()
 
-                            // Update thread_id if different from current
-                            if (parsedData.thread_id && parsedData.thread_id !== this.activeChat.id) {
-                                console.log(`Server assigned new thread_id: ${parsedData.thread_id}`);
-                                
-                                // Update thread_id in messages and chat
-                                this.activeChat.messages.forEach(msg => {
-                                    msg.thread_id = parsedData.thread_id;
-                                });
-                                
-                                if (this.activeChat.id.startsWith('temp-')) {
-                                    this.activeChat.id = parsedData.thread_id;                                    
-                                    this.activeChatId = parsedData.thread_id;
-                                    this.activeChat.name = parsedData.content;
+                            // A new chat gets its real thread_id and generated title from the server
+                            if (chat.id.startsWith('temp-') && parsedData.thread_id) {
+                                const wasActive = this.activeChatId === chat.id
+                                chat.messages.forEach(msg => {
+                                    msg.thread_id = parsedData.thread_id
+                                })
+                                chat.id = parsedData.thread_id
+                                chat.name = parsedData.content || chat.name
+                                chat.editingName = chat.name
+                                if (wasActive) {
+                                    this.activeChatId = parsedData.thread_id
                                 }
                             }
+                            break
 
-                            break;
-                            
                         case "error":
-                            console.error("Server error:", parsedData.error);
-                            // Update message with error
-                            if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                                const currentMsg = this.activeChat.messages[messageIndex];
-                                currentMsg.content = `Error: ${parsedData.error || 'Unknown error'}. Please try again.`;
-                                currentMsg.isStreaming = false;
-                            }
-                            es.close();
-                            this.isSending = false;
-                            break;
-                            
+                            console.error("Server error:", parsedData.content)
+                            finish(parsedData.content || 'Unknown error')
+                            break
+
                         default:
-                            console.log("Unknown message type:", parsedData.type);
+                            console.log("Unknown message type:", parsedData.type)
                     }
-                });
-
-                // Handle errors
-                es.addEventListener('error', (error) => {
-                    console.error('EventSource error:', error)
-
-                    // Check for HTTP error codes (if available)
-                    if (error.code) {
-                        console.error(`HTTP error code: ${error.code}`)
-                    }
-
-                    // Update the message with error content
-                    if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                        const currentMsg = this.activeChat.messages[messageIndex]
-
-                        if (currentMsg.isStreaming) {
-                            currentMsg.content = `Error: Connection failed. Please try again.`
-                        } else {
-                            currentMsg.content += `\n\nError: Connection lost. Please try again.`
-                        }
-
-                        currentMsg.isStreaming = false
-                    }
-
-                    es.close()
-                    this.isSending = false
                 })
 
-                // Set up a safety timeout in case the [DONE] event never arrives
-                const timeoutId = setTimeout(() => {
-                    if (messageIndex >= 0 &&
-                        messageIndex < this.activeChat.messages.length &&
-                        this.activeChat.messages[messageIndex].isStreaming) {
-
-                        console.log('Stream timeout - closing connection')
-                        this.activeChat.messages[messageIndex].isStreaming = false
-                        es.close()
-                        this.isSending = false
-                    }
-                }, 30000) // 30-second timeout
-
-                // Clean up when component unmounts or stream completes
-                const cleanup = () => {
-                    clearTimeout(timeoutId)
-                    es.close()
-                    this.isSending = false
-                }
-
+                // Closing here also stops EventSource from reconnecting and re-sending the query
+                es.addEventListener('error', (error) => {
+                    console.error('EventSource error:', error)
+                    finish('Connection failed. Please try again.')
+                })
             } catch (error) {
                 console.error('Error setting up message stream:', error)
-
-                // Update the message with error content
-                const messageIndex = this.activeChat.messages.length - 1;
-                if (messageIndex >= 0 && messageIndex < this.activeChat.messages.length) {
-                    const currentMsg = this.activeChat.messages[messageIndex]
-
-                    if (currentMsg.isStreaming) {
-                        currentMsg.content = `Error: ${error.message || 'Failed to load response'}. Please try again.`
-                    } else {
-                        currentMsg.content += `\n\nError: ${error.message || 'Connection failed'}. Please try again.`
-                    }
-
-                    currentMsg.isStreaming = false
-                }
-
-                this.isSending = false
+                finish(error.message || 'Failed to load response')
             }
-
         },
 
         toggleMenu(chatId) {

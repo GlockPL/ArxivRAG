@@ -16,11 +16,15 @@ class Settings(BaseSettings):
     """
     google_api_key: str = Field("", alias='GOOGLE_API_KEY')
     openai_api_key: str = Field("", alias='OPENAI_API_KEY')
-    model: str = Field("gemini-2.0-flash")
+    model: str = Field("gemini-3.8-flash")
     model_big: str = Field("gemini-2.0-pro-exp-02-05")
-    model_oai: str = Field("gpt-4o")
-    embedder: str = Field("text-embedding-004")
-    collection: str = Field("Arxiv")
+    model_oai: str = Field("gpt-5.4-mini")
+    # Chat model provider used by get_llm: "openai" or "google"
+    llm_provider: str = Field("openai", alias='LLM_PROVIDER')
+    # Local TEI embedding server, see the embeddings service in docker-compose.yml
+    embedding_url: str = Field("http://localhost:8081", alias='EMBEDDING_URL')
+    embedding_model: str = Field("Qwen/Qwen3-Embedding-0.6B", alias='EMBEDDING_MODEL')
+    collection: str = Field("ArxivQwen3")
     json_dir: Path = Path('./json_gemini/')
     temperature: float = Field(0.1)
     text_key: str = Field("page_content")

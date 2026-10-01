@@ -56,6 +56,17 @@ def retrieve(query: str) -> tuple[str, List[Document]]:
         return serialized, retrieved_docs
 
 
+def content_to_text(content: str | list) -> str:
+    """Return message content as plain text; some models return a list of content blocks instead of a string."""
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block if isinstance(block, str) else block.get("text", "")
+        for block in content
+        if isinstance(block, str) or block.get("type") == "text"
+    )
+
+
 class RAG:
     def __init__(self):
         # self.rag_prompt = hub.pull("rlm/rag-prompt")
@@ -68,7 +79,6 @@ class RAG:
         self.rag_prompt = PromptTemplate.from_template(self.template)
         self.db_settings = DBSettings()
         self.llm = get_llm()
-        # self.llm = get_oai_llm()
         db_uri = f"postgresql://{self.db_settings.user}:{self.db_settings.password}@{self.db_settings.host}:{self.db_settings.db_port}/{self.db_settings.user}?sslmode=disable"
         self.engine = create_engine(db_uri)
         self.session = Session(self.engine)
@@ -127,7 +137,7 @@ class RAG:
                 HumanMessage(content=user_query)
             ]
             response = self.llm.invoke(prompt)
-            title = response.content
+            title = content_to_text(response.content)
             thread_id = config["metadata"]["thread_id"]
             user_id = config["configurable"]["user_id"]
 
@@ -170,7 +180,7 @@ class RAG:
         checkpointer = PostgresSaver(self.connection)
 
         logging.info("Setting up checkpointer database")
-        # checkpointer.setup()
+        checkpointer.setup()
 
         graph = graph_builder.compile(checkpointer=checkpointer)
         # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional
@@ -181,10 +191,11 @@ class RAG:
         config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
         for chunk, metadata in self.graph.stream({"messages": [{"role": "user", "content": query}]}, config=config,
                                                  stream_mode="messages"):
-            if chunk.content:
+            content = content_to_text(chunk.content)
+            if content:
                 if "langgraph_node" in metadata:
                     if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
-                        yield chunk.content
+                        yield content
                     # else:
                     #     yield "Thinking"
 

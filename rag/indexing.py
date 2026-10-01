@@ -15,7 +15,7 @@ from weaviate.collections.classes.filters import Filter
 
 from rag.settings import Settings
 from rag.db.db import WeaviateDB
-from rag.utils import get_llm
+from rag.utils import get_llm, get_embeddings
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -160,11 +160,14 @@ class ContextualIndexing:
                 i = 0
                 yield documents
 
-        yield documents
+        # Yield the last partial batch; a full batch was already yielded inside the loop
+        if i > 0:
+            yield documents
 
     def insert_documents(self, ):
         with WeaviateDB() as wdb:
-            wvs = WeaviateVectorStore(wdb, index_name=self.settings.collection, text_key=self.settings.text_key)
+            wvs = WeaviateVectorStore(wdb, index_name=self.settings.collection, text_key=self.settings.text_key,
+                                      embedding=get_embeddings())
             for docs in self.create_documents():
                 wvs.add_documents(documents=docs)
 

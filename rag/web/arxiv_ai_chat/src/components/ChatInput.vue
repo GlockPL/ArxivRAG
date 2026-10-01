@@ -2,7 +2,7 @@
   <div class="chat-input">
     <div class="input-area">
       <textarea class="message-input" v-model="message"
-        placeholder="Type a message (supports markdown and LaTeX using $...$)..." @keydown.enter.prevent="sendMessage"
+        placeholder="Type a message (supports markdown and LaTeX using $...$)..." @keydown.enter.exact.prevent="sendMessage"
         ref="messageInput"></textarea>
       <button class="send-btn" @click="sendMessage" :disabled="isSending">
         <i v-if="!isSending" class="fas fa-paper-plane"></i>
@@ -31,7 +31,7 @@ export default {
     const isSending = computed(() => chatStore.isSending)
 
     const sendMessage = async () => {
-      if (!message.value.trim()) return
+      if (!message.value.trim() || isSending.value) return
 
       const messageText = message.value
       message.value = ''

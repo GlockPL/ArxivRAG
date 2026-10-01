@@ -1,39 +1,46 @@
-[tool.poetry]
+[project]
 name = "rag"
 version = "0.1.0"
 description = ""
-authors = ["GlockPL <pakerzus@tlen.pl>"]
+authors = [
+    {name = "GlockPL", email = "pakerzus@tlen.pl"}
+]
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-weaviate>=0.0.4",
+    "pydantic[email]>=2.10.6",
+    "pydantic-settings>=2.7.1",
+    "weaviate-client>=4.11.0",
+    "langchain-google-genai>=2.0.9",
+    "langgraph>=0.2.74",
+    "langchain>=0.3.19",
+    "langchain-openai>=0.3.6",
+    "langgraph-checkpoint-postgres>=2.0.15",
+    "fastapi>=0.115.8",
+    "uvicorn>=0.34.0",
+    "python-jose>=3.4.0",
+    "python-multipart>=0.0.20",
+    "psycopg2-binary>=2.9.10",
+    "redis>=5.2.1",
+    "psycopg-binary>=3.2.5",
+    "json-repair>=0.39.1",
+    "natsort>=8.4.0",
+    "google-genai>=1.5.0",
+    "mistralai>=1.5.1",
+    "PyMuPDF>=1.25.3",
+    "bcrypt>=4.3.0",
+    "slowapi>=0.1.9",
+    "asyncpg>=0.30.0",
+    "python-dotenv>=1.1.1",
+    "tqdm>=4.67.1",
+    "sqlalchemy>=2.0.43",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-langchain-weaviate = "^0.0.4"
-pydantic = {extras = ["email"], version = "^2.10.6"}
-pydantic-settings = "^2.7.1"
-weaviate-client = "^4.11.0"
-langchain-google-genai = "^2.0.9"
-langgraph = "^0.2.74"
-langchain = "^0.3.19"
-langchain-openai = "^0.3.6"
-langgraph-checkpoint-postgres = "^2.0.15"
-fastapi = "^0.115.8"
-uvicorn = "^0.34.0"
-python-jose = "^3.4.0"
-python-multipart = "^0.0.20"
-psycopg2-binary = "^2.9.10"
-redis = "^5.2.1"
-psycopg-binary = "^3.2.5"
-json-repair = "^0.39.1"
-natsort = "^8.4.0"
-google-genai = "^1.5.0"
-mistralai = "^1.5.1"
-PyMuPDF = "^1.25.3"
-bcrypt = "^4.3.0"
-slowapi = "^0.1.9"
-asyncpg = "^0.30.0"
-
-[tool.poetry.dev-dependencies]
-pytest = "^5.2"
+[dependency-groups]
+dev = [
+    "pytest>=5.2",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

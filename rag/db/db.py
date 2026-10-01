@@ -1,10 +1,44 @@
 import weaviate
 import logging
 
+from weaviate.collections import Collection
 from weaviate.collections.classes.config import Configure
 import weaviate.classes as wvc
 
 from rag.settings import Settings
+
+
+def create_collection(client: weaviate.WeaviateClient, name: str) -> Collection:
+    """
+    Create a collection for article chunks. Vectors are computed by the application with the local
+    embedding model (see rag.embeddings), so Weaviate does not vectorize anything itself.
+    """
+    return client.collections.create(
+        name=name,
+        vectorizer_config=Configure.Vectorizer.none(),
+        properties=[
+            wvc.config.Property(
+                name="page_content",
+                data_type=wvc.config.DataType.TEXT,
+            ),
+            wvc.config.Property(
+                name="source",
+                data_type=wvc.config.DataType.TEXT,
+            ),
+            wvc.config.Property(
+                name="section_title",
+                data_type=wvc.config.DataType.TEXT,
+            ),
+            wvc.config.Property(
+                name="section_number",
+                data_type=wvc.config.DataType.INT,
+            ),
+            wvc.config.Property(
+                name="authors",
+                data_type=wvc.config.DataType.TEXT,
+            )
+        ]
+    )
 
 
 class WeaviateDB:
@@ -14,7 +48,6 @@ class WeaviateDB:
 
     def __enter__(self) -> weaviate.WeaviateClient:
         self.client = weaviate.connect_to_local(host=self.settings.weaviate_host)
-        meta = self.client.get_meta()
         if not self.client.collections.exists(self.settings.collection):
             self.configure()
 
@@ -25,28 +58,4 @@ class WeaviateDB:
         self.client.close()
 
     def configure(self):
-        coll = self.client.collections.create(
-            name=self.settings.collection,
-            vectorizer_config=Configure.Vectorizer.text2vec_google_aistudio(self.settings.embedder),
-            generative_config=Configure.Generative.google(project_id="id", model_id=self.settings.model),
-            properties=[
-                wvc.config.Property(
-                    name="source",
-                    data_type=wvc.config.DataType.TEXT,
-                ),
-                wvc.config.Property(
-                    name="section_title",
-                    data_type=wvc.config.DataType.TEXT,
-                ),
-                wvc.config.Property(
-                    name="section_number",
-                    data_type=wvc.config.DataType.INT,
-                ),
-                wvc.config.Property(
-                    name="authors",
-                    data_type=wvc.config.DataType.TEXT,
-                )
-            ]
-        )
-        return coll
-
+        return create_collection(self.client, self.settings.collection)

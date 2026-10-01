@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 from datetime import timedelta
-from typing import List, AsyncGenerator
+from typing import List, AsyncGenerator, Optional
 from contextlib import asynccontextmanager
 
 import asyncio
@@ -32,7 +32,7 @@ from rag.api.utils import get_password_hash, authenticate_user, create_access_to
     get_one_conversation, generate_unique_thread_id, get_conversation_with_check
 from rag.settings import DBSettings, TokenSettings, Settings, HostSettings
 from rag.db.db_objects import User, LoginHistory, Base, CheckpointBlob, CheckpointWrite, Checkpoint
-from rag.rag_pipeline import RAG
+from rag.rag_pipeline import RAG, content_to_text
 
 db_settings = DBSettings()
 main_settings = Settings()
@@ -116,10 +116,11 @@ async def get_messages(thread_id: str):
         else:
             continue
 
-        if not message.content:
+        content = content_to_text(message.content)
+        if not content:
             continue
 
-        message_state = MessageResponse(content=message.content, type=msg_type, thread_id=thread_id)
+        message_state = MessageResponse(content=content, type=msg_type, thread_id=thread_id)
         messages_list.append(message_state)
 
     return messages_list
@@ -134,10 +135,13 @@ async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depe
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if await is_token_blacklisted(token):
+        raise credentials_exception
+
     try:
         payload = jwt.decode(token, token_settings.secret_key, algorithms=[token_settings.algorithm])
         username: str = payload.get("sub")
-        if username is None:
+        if username is None or payload.get("token_type") != "access":
             raise credentials_exception
         token_data = TokenData(username=username)
     except JWTError as jwt_error:
@@ -244,7 +248,7 @@ async def refresh_access_token(
     refresh_token = refresh_data.refresh_token
 
     # Check if token is blacklisted
-    if is_token_blacklisted(refresh_token):
+    if await is_token_blacklisted(refresh_token):
         raise credentials_exception
 
     try:
@@ -299,13 +303,13 @@ async def refresh_access_token(
 @limiter.limit("15/hour")
 async def logout(
         request: Request,
-        refresh_token: str = None,
+        refresh_data: Optional[RefreshRequest] = None,
 ):
     await logout_operation(request)
 
-    # Invalidate refresh token if provided
-    if refresh_token:
-        await invalidate_refresh_token(refresh_token)
+    # Invalidate refresh token if provided in the request body
+    if refresh_data:
+        await invalidate_refresh_token(refresh_data.refresh_token)
 
     return {"detail": "Successfully logged out"}
 
@@ -433,11 +437,11 @@ async def list_conversations(
 
 
 async def stream_generator(query: str, thread_id: str, user_id: int, db: AsyncSession) -> AsyncGenerator[str, None]:
-    try:
-        # Send an initial event to establish the connection and provide thread_id
-        json_ret = json.dumps({"type": "connection_established", "content": "[START]", "thread_id": thread_id})
-        yield f"data: {json_ret}\n\n"
+    # Send an initial event to establish the connection and provide thread_id
+    json_ret = json.dumps({"type": "connection_established", "content": "[START]", "thread_id": thread_id})
+    yield f"data: {json_ret}\n\n"
 
+    try:
         # Stream content from RAG
         for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
             # Add thread_id to each token message
@@ -446,16 +450,18 @@ async def stream_generator(query: str, thread_id: str, user_id: int, db: AsyncSe
             escaped_message = json.dumps(message_data)
             # Format as a proper SSE message
             yield f"data: {escaped_message}\n\n"
-            # Force flush with a small delay to ensure incremental delivery
-            await asyncio.sleep(0.1)
+            # Yield to the event loop so each chunk is flushed to the client immediately
+            await asyncio.sleep(0)
 
     except Exception as e:
-        print(f"Error in streaming: {str(e)}")
+        logging.exception("Error in streaming")
         error_msg = json.dumps({"type": "error", "content": str(e), "thread_id": thread_id})
         yield f"data: {error_msg}\n\n"
+        return
 
     convo = await get_one_conversation(db, thread_id)
-    json_ret = json.dumps({"type": "streaming_finished", "content": convo.title, "thread_id": thread_id})
+    title = convo.title if convo else ""
+    json_ret = json.dumps({"type": "streaming_finished", "content": title, "thread_id": thread_id})
     # Send an end message with thread_id
     yield f"data: {json_ret}\n\n"
 

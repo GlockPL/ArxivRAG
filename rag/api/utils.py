@@ -82,7 +82,7 @@ async def invalidate_refresh_token(token: str) -> bool:
     """Invalidate a single refresh token"""
     try:
         # Get user ID associated with this token
-        user_id = redis_client.get(f"refresh_token:{token}")
+        user_id = await redis_client.get(f"refresh_token:{token}")
         if user_id:
             # Remove token from user's set
             await redis_client.srem(f"user:{user_id}:refresh_tokens", token)
@@ -98,7 +98,7 @@ async def invalidate_all_user_tokens(user_id: int) -> bool:
     """Invalidate all refresh tokens for a user"""
     try:
         user_token_key = f"user:{user_id}:refresh_tokens"
-        tokens = redis_client.smembers(user_token_key)
+        tokens = await redis_client.smembers(user_token_key)
 
         # Delete each token
         for token in tokens:
@@ -166,6 +166,7 @@ async def create_access_token(data: dict, expires_delta: Optional[timedelta] = N
     Generate access token by encoding username and expiration time
     """
     to_encode = data.copy()
+    to_encode.update({"token_type": "access"})
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:

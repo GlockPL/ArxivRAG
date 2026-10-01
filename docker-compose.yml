@@ -1,4 +1,4 @@
-version: '3.9'
+---
 
 services:
   weaviate:
@@ -26,6 +26,32 @@ services:
       ENABLE_MODULES: 'text2vec-palm,generative-palm,backup-filesystem'
       CLUSTER_HOSTNAME: 'node1'
       BACKUP_FILESYSTEM_PATH: '/tmp/backups'
+
+  embeddings:
+    # Local text embeddings server; 86-* images target Ampere GPUs (RTX 30xx), use cpu-* without a GPU
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.9.4
+    command:
+    - --model-id
+    - ${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+    - --max-client-batch-size
+    - '256'
+    - --max-batch-tokens
+    - '65536'
+    - --max-concurrent-requests
+    - '4096'
+    - --auto-truncate
+    ports:
+    - "8081:80"
+    volumes:
+    - hf_cache:/data
+    restart: on-failure:0
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
 
   postgres:
     image: postgres:17.4
@@ -57,6 +83,7 @@ services:
 
 
 volumes:
+  hf_cache:
   weaviate_data:
   pg_data:
   redis_data:

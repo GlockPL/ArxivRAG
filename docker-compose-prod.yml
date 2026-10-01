@@ -85,6 +85,9 @@ services:
       - "8000"
       - --workers
       - "2"
+      # Trust X-Forwarded-For from Traefik so rate limits and login history see the real client IP
+      - --forwarded-allow-ips
+      - "*"
     environment:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
