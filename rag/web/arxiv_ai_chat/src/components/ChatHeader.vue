@@ -1,7 +1,10 @@
 <template>
-  <div class="chat-header">
-    <h2>{{ displayedText }}</h2>
-  </div>
+  <header class="chat-header">
+    <button class="icon-btn menu-toggle" @click="toggleSidebar" aria-label="Open conversations">
+      <i class="fas fa-bars"></i>
+    </button>
+    <h2>{{ displayedText || 'arXiv RAG' }}</h2>
+  </header>
 </template>
 
 <script>
@@ -20,7 +23,7 @@ export default {
     let typingTimer = null
 
     // Animation settings
-    const typingSpeed = 50 // milliseconds between characters
+    const typingSpeed = 30 // milliseconds between characters
 
     // Function to animate typing
     const animateTyping = (fullText) => {
@@ -52,50 +55,31 @@ export default {
       }
     }
 
-    // Watch for changes to the chat name
+    // Type out a freshly generated title once; any other title (switching or loading chats) shows instantly
     watch(
       () => activeChat.value?.name,
       (newName) => {
-        if (newName) {
+        if (typingTimer) {
+          clearTimeout(typingTimer)
+        }
+        if (newName && activeChat.value.animateTitle) {
+          activeChat.value.animateTitle = false
           animateTyping(newName)
         } else {
-          displayedText.value = ''
+          displayedText.value = newName || ''
         }
       },
       { immediate: true }
     )
 
+    const toggleSidebar = () => {
+      chatStore.toggleSidebar()
+    }
+
     return {
-      activeChat,
-      displayedText
+      displayedText,
+      toggleSidebar
     }
   }
 }
 </script>
-
-<style scoped>
-.chat-header h2 {
-  min-height: 1.5em;
-  /* Maintain consistent height during animation */
-  position: relative;
-}
-
-.chat-header h2:after {
-  content: '|';
-  position: absolute;
-  right: -8px;
-  animation: blink 1s step-end infinite;
-}
-
-@keyframes blink {
-
-  from,
-  to {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0;
-  }
-}
-</style>

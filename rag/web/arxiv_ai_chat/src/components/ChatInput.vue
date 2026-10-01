@@ -1,18 +1,15 @@
 <template>
   <div class="chat-input">
     <div class="input-area">
-      <textarea class="message-input" v-model="message"
-        placeholder="Type a message (supports markdown and LaTeX using $...$)..." @keydown.enter.exact.prevent="sendMessage"
-        ref="messageInput"></textarea>
-      <button class="send-btn" @click="sendMessage" :disabled="isSending">
-        <i v-if="!isSending" class="fas fa-paper-plane"></i>
-        <div v-else class="loading-spinner" style="width: 16px; height: 16px;"></div>
+      <textarea class="message-input" v-model="message" rows="1" placeholder="Ask about arXiv cs.AI papers..."
+        @keydown.enter.exact.prevent="sendMessage" @input="resize" ref="messageInput"></textarea>
+      <button class="send-btn" @click="sendMessage" :disabled="isSending || !message.trim()" aria-label="Send message">
+        <i v-if="!isSending" class="fas fa-arrow-up"></i>
+        <div v-else class="loading-spinner"></div>
       </button>
     </div>
-    <!-- LaTeX Help Tooltip -->
     <div class="latex-help">
-      <i class="fas fa-question-circle"></i>
-      <span>Use $...$ for inline math and $$...$$ for display equations</span>
+      <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <code>$...$</code> for math
     </div>
   </div>
 </template>
@@ -30,17 +27,26 @@ export default {
 
     const isSending = computed(() => chatStore.isSending)
 
+    // Grow the textarea with its content, up to the max-height set in CSS
+    const resize = () => {
+      const textarea = messageInput.value
+      if (!textarea) return
+      textarea.style.height = 'auto'
+      textarea.style.height = `${textarea.scrollHeight}px`
+    }
+
     const sendMessage = async () => {
       if (!message.value.trim() || isSending.value) return
 
       const messageText = message.value
       message.value = ''
+      nextTick(resize)
 
       await chatStore.sendMessage(messageText)
 
       // Focus back on input
       nextTick(() => {
-        messageInput.value.focus()
+        messageInput.value?.focus()
       })
     }
 
@@ -48,6 +54,7 @@ export default {
       message,
       messageInput,
       isSending,
+      resize,
       sendMessage
     }
   }

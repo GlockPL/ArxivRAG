@@ -1,18 +1,23 @@
 <template>
     <div id="outer">
-        <div class="sidebar">
-            <UserInfo />
+        <div class="sidebar-overlay" :class="{ open: sidebarOpen }" @click="closeSidebar"></div>
+        <aside class="sidebar" :class="{ open: sidebarOpen }">
+            <div class="sidebar-brand">
+                <span class="brand-mark"><i class="fas fa-book-open"></i></span>
+                arXiv RAG
+            </div>
             <div class="sidebar-header">
-                <h2>Chats</h2>
-                <button class="new-chat-btn" @click="createNewChat">
-                    <i class="fas fa-plus"></i> New
+                <button class="btn-primary new-chat-btn" @click="createNewChat">
+                    <i class="fas fa-plus"></i> New chat
                 </button>
             </div>
+            <div class="sidebar-section-label">Recent</div>
             <ChatList />
-        </div>
-        <div class="main">
+            <UserInfo />
+        </aside>
+        <main class="main">
+            <ChatHeader />
             <template v-if="activeChat">
-                <ChatHeader />
                 <div v-if="isLoadingMessages" class="messages-loading">
                     <div class="loading-spinner"></div>
                     <span>Loading messages...</span>
@@ -21,7 +26,7 @@
                 <ChatInput />
             </template>
             <EmptyState v-else />
-        </div>
+        </main>
     </div>
 </template>
 
@@ -50,9 +55,15 @@ export default {
 
         const activeChat = computed(() => chatStore.activeChat)
         const isLoadingMessages = computed(() => chatStore.isLoadingMessages)
+        const sidebarOpen = computed(() => chatStore.sidebarOpen)
 
         const createNewChat = () => {
             chatStore.createNewChat()
+            chatStore.toggleSidebar(false)
+        }
+
+        const closeSidebar = () => {
+            chatStore.toggleSidebar(false)
         }
 
         onMounted(() => {
@@ -62,7 +73,9 @@ export default {
         return {
             activeChat,
             isLoadingMessages,
-            createNewChat
+            sidebarOpen,
+            createNewChat,
+            closeSidebar
         }
     }
 }

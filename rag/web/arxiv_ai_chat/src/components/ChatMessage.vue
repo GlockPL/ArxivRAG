@@ -2,10 +2,10 @@
     <div class="message" :class="{ sent: message.type === 'human' }">
         <div class="message-avatar">
             <span v-if="message.type === 'human'">{{ userInitial }}</span>
-            <span v-else><i class="fa-solid fa-robot"></i></span>
+            <i v-else class="fas fa-book-open"></i>
         </div>
         <div v-if="message.isStreaming && !message.content" class="message-content">
-            <div class="thinking"><div class="dot-spinner"></div><span>Thinking...</span></div>
+            <div class="thinking"><span class="dot-spinner"><span></span><span></span><span></span></span>Thinking</div>
         </div>
         <div v-else class="message-content markdown-content" v-html="renderedContent">
         </div>

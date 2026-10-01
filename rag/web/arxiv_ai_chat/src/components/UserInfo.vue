@@ -6,8 +6,8 @@
     <div class="user-details">
       <div class="user-name">{{ username }}</div>
     </div>
-    <button class="logout-btn" @click="logout">
-      <i class="fas fa-sign-out-alt"></i>
+    <button class="icon-btn logout-btn" @click="logout" title="Log out" aria-label="Log out">
+      <i class="fas fa-arrow-right-from-bracket"></i>
     </button>
   </div>
 </template>

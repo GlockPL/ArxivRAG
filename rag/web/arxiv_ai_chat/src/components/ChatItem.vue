@@ -14,21 +14,20 @@
         {{ chat.name }}
       </template>
     </div>
-    <div class="chat-date">{{ formatDate(chat.createdAt) }}</div>
-    <div class="chat-preview">{{ getLastMessagePreview(chat) }}</div>
+    <div v-if="!chat.isEditing" class="chat-date">{{ formatDate(chat.createdAt) }}</div>
 
     <!-- Menu Button and Dropdown -->
-    <button v-if="!chat.isEditing" class="chat-menu-button" @click.stop="toggleMenu(chat.id)">
-      <i class="fas fa-ellipsis-v"></i>
+    <button v-if="!chat.isEditing" class="chat-menu-button" @click.stop="toggleMenu(chat.id)" aria-label="Conversation actions">
+      <i class="fas fa-ellipsis"></i>
     </button>
 
     <!-- Dropdown Menu -->
     <div class="chat-menu" v-if="openMenuId === chat.id && !chat.isEditing">
       <div class="chat-menu-item" @click.stop="editConversationTitle(chat)">
-        <i class="fas fa-edit"></i> Edit title
+        <i class="fas fa-pen fa-fw"></i> Rename
       </div>
-      <div class="chat-menu-item" @click.stop="deleteConversation(chat.id)">
-        <i class="fas fa-trash"></i> Delete
+      <div class="chat-menu-item danger" @click.stop="deleteConversation(chat.id)">
+        <i class="fas fa-trash fa-fw"></i> Delete
       </div>
     </div>
   </div>
@@ -37,7 +36,7 @@
 <script>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores'
-import { formatDate, getLastMessagePreview } from '@/utils/dateFormatter'
+import { formatDate } from '@/utils/dateFormatter'
 
 export default {
   name: 'ChatItem',
@@ -103,8 +102,7 @@ export default {
       saveConversationTitle,
       cancelEditingTitle,
       deleteConversation,
-      formatDate,
-      getLastMessagePreview
+      formatDate
     }
   }
 }

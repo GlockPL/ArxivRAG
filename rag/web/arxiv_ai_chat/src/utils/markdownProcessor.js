@@ -1,8 +1,10 @@
 import { marked } from 'marked';
 import markedKatex from 'marked-katex-extension';
+import { markedHighlight } from 'marked-highlight';
 import DOMPurify from 'dompurify';
 import Prism from 'prismjs';
 import 'katex/dist/katex.min.css';
+import 'prismjs/themes/prism-tomorrow.css';
 
 // Import common languages
 import 'prismjs/components/prism-javascript';
@@ -16,14 +18,16 @@ import 'prismjs/components/prism-markdown';
 marked.use({
   breaks: true,         // Convert \n to <br>
   gfm: true,            // GitHub Flavored Markdown
-  hooks: {
-    postprocess(html) {
-      // Apply Prism highlighting after the HTML is inserted into the DOM
-      setTimeout(() => Prism.highlightAll(), 0);
-      return html;
-    }
-  }
 });
+
+// Highlight code blocks while rendering, so streamed messages need no extra pass over the DOM
+marked.use(markedHighlight({
+  langPrefix: 'language-',
+  highlight(code, lang) {
+    const grammar = Prism.languages[lang];
+    return grammar ? Prism.highlight(code, grammar, lang) : code;
+  }
+}));
 
 // Render $...$ and $$...$$ with KaTeX while parsing, so math in streamed messages needs no later typesetting
 marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
@@ -53,12 +57,4 @@ export function renderMarkdown(text) {
   });
   // Model output can contain text from retrieved documents, so it must never reach v-html unsanitized
   return DOMPurify.sanitize(marked.parse(processedText));
-}
-
-/**
- * Reapplies Prism highlighting to any code blocks in the document
- * Call this after dynamically inserting rendered markdown into the DOM
- */
-export function rehighlightCode() {
-  Prism.highlightAll();
 }
