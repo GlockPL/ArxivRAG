@@ -29,7 +29,7 @@ from rag.api.utils import get_password_hash, authenticate_user, create_access_to
     create_refresh_token, store_refresh_token, is_token_blacklisted, validate_refresh_token, \
     invalidate_refresh_token, logout_operation, invalidate_all_user_tokens, \
     get_user_conversation_newest, get_user_conversation_count, get_user_conversations, \
-    get_one_conversation, generate_thread_id, get_conversation_with_check
+    get_one_conversation, generate_thread_id, get_conversation_with_check, redis_client
 from rag.settings import db_settings, token_settings, host_settings
 from rag.db.db_objects import User, LoginHistory, Base, ConversationTitle
 from rag.rag_pipeline import RAG
@@ -52,6 +52,7 @@ async def lifespan(application: FastAPI):
 
     # Shutdown: cleanup resources
     await application.state.rag.close()
+    await redis_client.aclose()
     await engine.dispose()
 
 
