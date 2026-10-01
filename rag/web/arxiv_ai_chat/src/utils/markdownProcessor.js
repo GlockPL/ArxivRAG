@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify';
 import Prism from 'prismjs';
 import 'katex/dist/katex.min.css';
 import 'prismjs/themes/prism-tomorrow.css';
+import { normalizeMathDelimiters } from './mathDelimiters';
 
 // Import common languages
 import 'prismjs/components/prism-javascript';
@@ -52,7 +53,7 @@ export function renderMarkdown(text) {
   }
 
   // Pre-process code blocks to ensure proper formatting
-  const processedText = text.replace(/```(.*?)\n([\s\S]*?)```/g, (match, lang, code) => {
+  const processedText = normalizeMathDelimiters(text).replace(/```(.*?)\n([\s\S]*?)```/g, (match, lang, code) => {
     return `\n\`\`\`${lang}\n${code}\n\`\`\`\n`;
   });
   // Model output can contain text from retrieved documents, so it must never reach v-html unsanitized
