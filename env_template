@@ -12,3 +12,7 @@ REDIS_PASSWORD="..."
 REDIS_HOST="redis"
 VITE_API_BASE_URL="http://localhost:8000"
 WEAVIATE_HOST="localhost"
+EMBEDDING_URL="http://localhost:8081"
+EMBEDDING_MODEL="Qwen/Qwen3-Embedding-0.6B"
+# Optional, defaults to PG_USER
+PG_DB=""

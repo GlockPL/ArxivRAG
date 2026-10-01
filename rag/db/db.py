@@ -1,11 +1,10 @@
 import weaviate
-import logging
 
 from weaviate.collections import Collection
 from weaviate.collections.classes.config import Configure
 import weaviate.classes as wvc
 
-from rag.settings import Settings
+from rag.settings import settings
 
 
 def create_collection(client: weaviate.WeaviateClient, name: str) -> Collection:
@@ -41,21 +40,11 @@ def create_collection(client: weaviate.WeaviateClient, name: str) -> Collection:
     )
 
 
-class WeaviateDB:
-    def __init__(self):
-        self.settings = Settings()
-        self.client = None
+def connect() -> weaviate.WeaviateClient:
+    """
+    Connect to Weaviate; the client is a context manager that closes the connection on exit:
 
-    def __enter__(self) -> weaviate.WeaviateClient:
-        self.client = weaviate.connect_to_local(host=self.settings.weaviate_host)
-        if not self.client.collections.exists(self.settings.collection):
-            self.configure()
-
-        logging.debug(self.client.is_ready())
-        return self.client
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.client.close()
-
-    def configure(self):
-        return create_collection(self.client, self.settings.collection)
+        with connect() as client:
+            ...
+    """
+    return weaviate.connect_to_local(host=settings.weaviate_host)

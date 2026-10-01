@@ -4,7 +4,7 @@ Models for fast api routes
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
 
 # ----- Pydantic Models for API -----
@@ -79,3 +79,11 @@ class RefreshRequest(BaseModel):
     Model for a refresh request
     """
     refresh_token: str
+
+
+class ChatRequest(BaseModel):
+    """
+    A user message; without thread_id a new conversation is started
+    """
+    query: str = Field(min_length=1)
+    thread_id: Optional[str] = None

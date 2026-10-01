@@ -37,20 +37,15 @@ class DBSettings(BaseSettings):
     Settings for PostgreSQL database
     """
     host: str = Field("localhost", alias="PG_HOST")
-    database: str = Field("", alias='PG_USER')
+    # Database name; defaults to the user name, which is what the postgres image creates
+    database: str = Field("", alias='PG_DB')
     user: str = Field("", alias='PG_USER')
     password: str = Field("", alias='PG_PASS')
     db_port: int = Field(5432)
 
-
-class LoginSettings(BaseSettings):
-    """
-    Settings for login and auth
-    """
-    cookie_name: str = Field("", alias='COOKIE_NAME')
-    auth_key: str = Field("", alias='AUTH_KEY')
-    cookie_key: str = Field("", alias='COOKIE_KEY')
-    cookie_expiry_days: int = Field(3, alias='COOKIE_EXPIRY_DAYS')
+    def uri(self, driver: str = "postgresql") -> str:
+        """Connection URI, e.g. driver="postgresql+asyncpg" for SQLAlchemy"""
+        return f"{driver}://{self.user}:{self.password}@{self.host}:{self.db_port}/{self.database or self.user}"
 
 
 class TokenSettings(BaseSettings):
@@ -78,3 +73,11 @@ class RedisSettings(BaseSettings):
     redis_host: str = Field("localhost", alias='REDIS_HOST')
     redis_port: int = Field(6379, alias='REDIS_PORT')
     redis_db: int = Field(0, alias='REDIS_DB')
+
+
+# Settings are read once from the environment and .env at import, use these instances instead of creating new ones
+settings = Settings()
+db_settings = DBSettings()
+token_settings = TokenSettings()
+host_settings = HostSettings()
+redis_settings = RedisSettings()

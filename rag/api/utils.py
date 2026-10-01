@@ -2,7 +2,6 @@ import asyncio
 import logging
 import uuid
 from datetime import timedelta, datetime, UTC
-import random
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 
@@ -15,10 +14,7 @@ from fastapi import Request, HTTPException
 
 from rag.api.models import ConversationResponse
 from rag.db.db_objects import User, ConversationTitle
-from rag.settings import RedisSettings, TokenSettings
-
-redis_settings = RedisSettings()
-token_settings = TokenSettings()
+from rag.settings import redis_settings, token_settings
 
 redis_client = redis.Redis(
     host=redis_settings.redis_host,
@@ -274,23 +270,9 @@ async def get_one_conversation(db: AsyncSession, thread_id: str):
 
 def generate_thread_id() -> str:
     """
-    Generate thread_id
+    Generate a new random thread_id
     """
-    new_thread_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"id_{new_thread_id}_{random.randint(0, 100000)}"
-
-
-async def generate_unique_thread_id(db: AsyncSession) -> str:
-    """
-    Generate unique thread_id by randomly generating thread_id
-    """
-    new_thread_id = generate_thread_id()
-    while True:
-        # Check if conversation exists
-        convo = await get_one_conversation(db, new_thread_id)
-        if not convo:
-            return new_thread_id
-        new_thread_id = generate_thread_id()
+    return uuid.uuid4().hex
 
 
 async def get_conversation_with_check(convo: ConversationTitle, current_user: User) -> ConversationResponse:

@@ -27,7 +27,7 @@ from tqdm import tqdm
 
 from rag.db.db import create_collection
 from rag.embeddings import TEIEmbeddings
-from rag.settings import Settings
+from rag.settings import settings
 
 PAGE_SIZE = 1000
 SHARD_SIZE = 10_000
@@ -35,11 +35,11 @@ REQUEST_BATCH_SIZE = 64
 CONCURRENT_REQUESTS = 8
 
 
-def shard_dir(settings: Settings) -> Path:
+def shard_dir() -> Path:
     return Path("./embeddings") / settings.embedding_model.replace("/", "__")
 
 
-def check_server_model(settings: Settings):
+def check_server_model():
     """Make sure TEI serves the model the shards are named after."""
     served = httpx.get(f"{settings.embedding_url}/info").json()["model_id"]
     if served != settings.embedding_model:
@@ -91,8 +91,8 @@ def completed_shards(directory: Path) -> list[Path]:
     return sorted(directory.glob("shard_*.npz"))
 
 
-def bench(args, settings: Settings):
-    check_server_model(settings)
+def bench(args):
+    check_server_model()
     embedder = TEIEmbeddings(settings.embedding_url)
     with weaviate.connect_to_local(host=settings.weaviate_host) as client:
         source = client.collections.get(args.source)
@@ -110,10 +110,10 @@ def bench(args, settings: Settings):
     print(f"estimated time for all {total} chunks: {total / rate / 3600:.1f} h")
 
 
-def embed(args, settings: Settings):
-    check_server_model(settings)
+def embed(args):
+    check_server_model()
     embedder = TEIEmbeddings(settings.embedding_url)
-    directory = shard_dir(settings)
+    directory = shard_dir()
     directory.mkdir(parents=True, exist_ok=True)
 
     # Resume after the last object of the last complete shard
@@ -151,8 +151,8 @@ def embed(args, settings: Settings):
     print(f"Shards saved in {directory}")
 
 
-def load(args, settings: Settings):
-    directory = shard_dir(settings)
+def load(args):
+    directory = shard_dir()
     shards = completed_shards(directory)
     if not shards:
         raise SystemExit(f"No shards found in {directory}, run the embed step first")
@@ -184,7 +184,6 @@ def load(args, settings: Settings):
 
 
 def main():
-    settings = Settings()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("step", choices=["bench", "embed", "load"])
     parser.add_argument("--source", default="Arxiv", help="collection to read chunks from")
@@ -192,7 +191,7 @@ def main():
     parser.add_argument("--limit", type=int, default=2000, help="number of chunks for the bench step")
     args = parser.parse_args()
 
-    {"bench": bench, "embed": embed, "load": load}[args.step](args, settings)
+    {"bench": bench, "embed": embed, "load": load}[args.step](args)
 
 
 if __name__ == "__main__":

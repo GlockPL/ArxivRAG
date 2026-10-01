@@ -1,206 +1,178 @@
+"""
+RAG chat pipeline: a LangGraph graph that decides whether to search the arXiv index, retrieves article
+sections and answers. Conversation history is persisted per thread by the Postgres checkpointer.
+"""
 import logging
-from datetime import datetime
-from typing import Generator, Iterator
-from typing_extensions import TypedDict, List, Annotated
+from typing import AsyncIterator
 
+import weaviate
 from langchain_core.documents import Document
-from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, ToolMessage
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from langchain_weaviate import WeaviateVectorStore
-from langgraph.checkpoint.postgres import PostgresSaver
-from langgraph.graph import END, StateGraph, add_messages
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.types import StateSnapshot
-from psycopg import Connection
-from pydantic import BaseModel
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
-from rag.db.db import WeaviateDB
-from rag.db.db_objects import ConversationTitle
-from rag.settings import Settings, DBSettings
-from rag.utils import get_llm, get_big_llm, get_embeddings, get_oai_llm
+from rag.settings import db_settings, settings
+from rag.utils import get_embeddings, get_llm
+
+ANSWER_PROMPT = """Use the following pieces of context to answer the question at the end.
+Each piece of context will have at the end source with arxiv index, list all of this sources and the end of your response.
+If you can't answer based on the context ask if you user wants to answer based on your knowledge.
+
+{context}"""
+
+# The question is embedded in the instruction, otherwise models tend to answer it instead of titling it
+TITLE_PROMPT = """Write a short title of at most 5 words for a conversation that starts with the question below.
+Do not answer the question. Return only the title.
+
+Question: {query}"""
+
+# Graph nodes whose model output is the answer shown to the user.
+# The names match the graph used before, so existing conversations keep working.
+ANSWER_NODES = ("query_or_respond", "generate")
 
 
-class RetrieveInput(BaseModel):
-    query: str
-
-
-class GrapState(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
-    title: str
-
-@tool(response_format="content_and_artifact", args_schema=RetrieveInput)
-def retrieve(query: str) -> tuple[str, List[Document]]:
+def handle_tool_error(error: Exception) -> str:
     """
-    Query the vector store using embeddings that will retrieve sections from Arxiv cs.AI articles.
-    :param query: string with user query
-    :return: string with retrieved documents and list of documents with metadata retrieved from vector store
+    Turn a failed search into a tool result. A tool call without a result would leave the conversation
+    history invalid for the model API and break every later message in the thread.
     """
-    settings = Settings()
-    with WeaviateDB() as wdb:
-        wvs = WeaviateVectorStore(
-            wdb,
-            embedding=get_embeddings(),
-            index_name=settings.collection,
-            text_key=settings.text_key,
-        )
-        retrieved_docs = wvs.similarity_search(query, k=10)
-        serialized = "\n\n".join(
-            f"Content: {doc.page_content}\n Source: {doc.metadata.get('source')}"
-            for doc in retrieved_docs
-        )
-        return serialized, retrieved_docs
-
-
-def content_to_text(content: str | list) -> str:
-    """Return message content as plain text; some models return a list of content blocks instead of a string."""
-    if isinstance(content, str):
-        return content
-    return "".join(
-        block if isinstance(block, str) else block.get("text", "")
-        for block in content
-        if isinstance(block, str) or block.get("type") == "text"
-    )
+    logging.error("Tool call failed", exc_info=error)
+    return f"The search failed with an error, tell the user that the article search is currently unavailable: {error}"
 
 
 class RAG:
-    def __init__(self):
-        # self.rag_prompt = hub.pull("rlm/rag-prompt")
-        self.template = """Use the following pieces of context to answer the question at the end.
-        Each piece of context will have at the end source with arxiv index, list all of this sources and the end of your response. 
-        If you can't answer based on the context ask if you user wants to answer based on your knowledge.                
+    """
+    Holds the compiled graph and the connections it uses. Create it with `await RAG.create()`
+    and release it with `await rag.close()`.
+    """
 
-        {context}
-        """
-        self.rag_prompt = PromptTemplate.from_template(self.template)
-        self.db_settings = DBSettings()
+    def __init__(self, pool: AsyncConnectionPool, checkpointer: AsyncPostgresSaver,
+                 weaviate_client: weaviate.WeaviateAsyncClient):
+        self.settings = settings
+        self.pool = pool
+        self.checkpointer = checkpointer
+        self.weaviate_client = weaviate_client
+        self.embeddings = get_embeddings()
         self.llm = get_llm()
-        db_uri = f"postgresql://{self.db_settings.user}:{self.db_settings.password}@{self.db_settings.host}:{self.db_settings.db_port}/{self.db_settings.user}?sslmode=disable"
-        self.engine = create_engine(db_uri)
-        self.session = Session(self.engine)
-        self.connection = Connection.connect(db_uri, autocommit=True)
+        self.retrieve = self.create_retrieve_tool()
         self.graph = self.create_graph()
 
-    def query_or_respond(self, state: GrapState) -> dict[str, list]:
-        """Generate tool call for retrieval or respond."""
-        llm_with_tools = self.llm.bind_tools([retrieve])
-        response = llm_with_tools.invoke(state["messages"])
-        # MessagesState appends messages to state instead of overwriting
-        return {"messages": [response], "title": state["title"]}
+    @classmethod
+    async def create(cls) -> "RAG":
+        pool = AsyncConnectionPool(
+            db_settings.uri(),
+            max_size=10,
+            open=False,
+            # Connection settings required by the LangGraph Postgres checkpointer
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        )
+        await pool.open()
+        checkpointer = AsyncPostgresSaver(pool)
+        await checkpointer.setup()
 
-    def generate(self, state: GrapState) -> dict[str, list]:
-        """Generate answer."""
+        weaviate_client = weaviate.use_async_with_local(host=settings.weaviate_host)
+        await weaviate_client.connect()
+        return cls(pool, checkpointer, weaviate_client)
+
+    async def close(self):
+        await self.weaviate_client.close()
+        await self.embeddings.aclose()
+        await self.pool.close()
+
+    def create_retrieve_tool(self):
+        collection = self.weaviate_client.collections.get(self.settings.collection)
+        embeddings = self.embeddings
+        text_key = self.settings.text_key
+
+        @tool(response_format="content_and_artifact")
+        async def retrieve(query: str) -> tuple[str, list[Document]]:
+            """
+            Query the vector store using embeddings that will retrieve sections from Arxiv cs.AI articles.
+            :param query: string with user query
+            :return: string with retrieved documents and list of documents with metadata retrieved from vector store
+            """
+            vector = await embeddings.aembed_query(query)
+            result = await collection.query.hybrid(query=query, vector=vector, limit=10)
+
+            retrieved_docs = []
+            for obj in result.objects:
+                properties = dict(obj.properties)
+                retrieved_docs.append(Document(page_content=properties.pop(text_key) or "", metadata=properties))
+
+            serialized = "\n\n".join(
+                f"Content: {doc.page_content}\n Source: {doc.metadata.get('source')}"
+                for doc in retrieved_docs
+            )
+            return serialized, retrieved_docs
+
+        return retrieve
+
+    async def query_or_respond(self, state: MessagesState) -> dict:
+        """Generate tool call for retrieval or respond."""
+        response = await self.llm.bind_tools([self.retrieve]).ainvoke(state["messages"])
+        return {"messages": [response]}
+
+    async def generate(self, state: MessagesState) -> dict:
+        """Generate answer from the results of the latest retrieval."""
         messages = state["messages"]
         recent_tool_messages = []
         for message in reversed(messages):
-            if message.type == "tool":
-                recent_tool_messages.append(message)
-            else:
+            if not isinstance(message, ToolMessage):
                 break
-        tool_messages = recent_tool_messages[::-1]
+            recent_tool_messages.append(message)
+        docs_content = "\n\n".join(message.text for message in reversed(recent_tool_messages))
 
-        docs_content = ""
-        # Extract content correctly from ToolMessage
-        for tool_message in tool_messages:
-            if isinstance(tool_message.content, str):
-                docs_content += tool_message.content + "\n\n"
-
-        system_message_content = f"""
-            Use the following pieces of context to answer the question at the end.
-            Each piece of context will have at the end source with arxiv index, list all of this sources and the end of your response.
-            If you can't answer based on the context ask if you user wants to answer based on your knowledge.
-            {docs_content}"""
-
-        # Exclude ToolMessages from the conversation history.
+        # Conversation without tool calls and their results, those only matter for the current answer
         conversation_messages = [
             message
             for message in messages
-            if not isinstance(message, ToolMessage) and (message.type in ("human", "system") or (
-                    message.type == 'ai' and not getattr(message, 'tool_calls', None)))
+            if isinstance(message, (HumanMessage, SystemMessage))
+            or (isinstance(message, AIMessage) and not message.tool_calls)
         ]
-        prompt = [SystemMessage(content=system_message_content)] + conversation_messages
-        response = self.llm.invoke(prompt)
-        return {"messages": [response], "title": state['title']}
-
-    def name_conversation(self, state: GrapState, config: RunnableConfig) -> dict[str, list]:
-        """Generate a title for the conversation based on the user's first query."""
-        messages = state["messages"]
-        if not state.get("title"):
-            user_query = messages[0].content  # Assumes first message is the user query
-            prompt = [
-                SystemMessage(
-                    content="Create a short, single concise title for this conversation. The title should be no more than 5 words. Return just the title. Here is the user's first question:"),
-                HumanMessage(content=user_query)
-            ]
-            response = self.llm.invoke(prompt)
-            title = content_to_text(response.content)
-            thread_id = config["metadata"]["thread_id"]
-            user_id = config["configurable"]["user_id"]
-
-            new_conversation = ConversationTitle(
-                thread_id=thread_id,
-                title=title,
-                created_at=datetime.now(),
-                user_id=user_id
-            )
-
-            # Add to session and commit
-            self.session.add(new_conversation)
-            self.session.commit()
-
-            return {"title": title, "messages": messages}
-
-        return {"title": state["title"], "messages": messages}
+        prompt = [SystemMessage(ANSWER_PROMPT.format(context=docs_content))] + conversation_messages
+        response = await self.llm.ainvoke(prompt)
+        return {"messages": [response]}
 
     def create_graph(self) -> CompiledStateGraph:
-        graph_builder = StateGraph(GrapState)
+        graph_builder = StateGraph(MessagesState)
         graph_builder.add_node("query_or_respond", self.query_or_respond)
-        graph_builder.add_node("tools", ToolNode([retrieve]))  # Use ToolNode
+        graph_builder.add_node("tools", ToolNode([self.retrieve], handle_tool_errors=handle_tool_error))
         graph_builder.add_node("generate", self.generate)
-        graph_builder.add_node("name_conversation", self.name_conversation)
 
-        graph_builder.set_entry_point("name_conversation")
-        graph_builder.add_conditional_edges(
-            "query_or_respond",
-            tools_condition,
-            {
-                "tools": "tools",
-                END: END
-            },
-        )
-        graph_builder.add_edge("name_conversation", "query_or_respond")
+        graph_builder.add_edge(START, "query_or_respond")
+        graph_builder.add_conditional_edges("query_or_respond", tools_condition, {"tools": "tools", END: END})
         graph_builder.add_edge("tools", "generate")
         graph_builder.add_edge("generate", END)
 
+        return graph_builder.compile(checkpointer=self.checkpointer)
 
-        checkpointer = PostgresSaver(self.connection)
+    async def astream(self, query: str, thread_id: str) -> AsyncIterator[str]:
+        """Add the user's query to the thread and stream the text of the answer."""
+        config = {"configurable": {"thread_id": thread_id}}
+        async for chunk, metadata in self.graph.astream(
+                {"messages": [HumanMessage(query)]}, config=config, stream_mode="messages"):
+            # Only answer text reaches the user, not tool calls or tool results.
+            # Text a model writes in the same message as a tool call would still pass, models rarely do that.
+            if (isinstance(chunk, AIMessage)
+                    and not chunk.tool_calls
+                    and not getattr(chunk, "tool_call_chunks", None)
+                    and metadata.get("langgraph_node") in ANSWER_NODES
+                    and chunk.text):
+                yield chunk.text
 
-        logging.info("Setting up checkpointer database")
-        checkpointer.setup()
+    async def generate_title(self, query: str) -> str:
+        """Generate a conversation title from the user's first query, outside the graph so it is not streamed."""
+        response = await self.llm.ainvoke([HumanMessage(TITLE_PROMPT.format(query=query))])
+        return response.text.strip().strip('"')[:100]
 
-        graph = graph_builder.compile(checkpointer=checkpointer)
-        # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")  # Optional
-        return graph
+    async def get_messages(self, thread_id: str) -> list[BaseMessage]:
+        state = await self.graph.aget_state({"configurable": {"thread_id": thread_id}})
+        return state.values.get("messages", [])
 
-    def stream(self, query: str, thread_id: str, user_id: int) -> Generator[str, None, None]:
-        """Streams the final response tokens."""
-        config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
-        for chunk, metadata in self.graph.stream({"messages": [{"role": "user", "content": query}]}, config=config,
-                                                 stream_mode="messages"):
-            content = content_to_text(chunk.content)
-            if content:
-                if "langgraph_node" in metadata:
-                    if metadata['langgraph_node'] == "generate" or metadata['langgraph_node'] == "query_or_respond":
-                        yield content
-                    # else:
-                    #     yield "Thinking"
-
-    def get_state_history(self, config: RunnableConfig) -> Iterator[StateSnapshot]:
-        return self.graph.get_state_history(config)
-
-    def __del__(self):
-        self.connection.close()
+    async def delete_thread(self, thread_id: str):
+        await self.checkpointer.adelete_thread(thread_id)

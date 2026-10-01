@@ -9,19 +9,24 @@ from tqdm import tqdm
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
+import weaviate
 from langchain_weaviate.vectorstores import WeaviateVectorStore
+from weaviate.collections import Collection
 from weaviate.collections.classes.aggregate import GroupByAggregate
 from weaviate.collections.classes.filters import Filter
 
-from rag.settings import Settings
-from rag.db.db import WeaviateDB
+from rag.settings import settings
+from rag.db.db import connect, create_collection
 from rag.utils import get_llm, get_embeddings
 
 logging.basicConfig(level=logging.ERROR)
 
 class ContextualIndexing:
-    def __init__(self):
-        self.settings = Settings()
+    def __init__(self, client: weaviate.WeaviateClient):
+        """
+        :param client: connected Weaviate client, used for the whole indexing run
+        """
+        self.client = client
         self.batch_size = 2
         self.summary_prompt = """
         <document> 
@@ -36,69 +41,59 @@ class ContextualIndexing:
 
         self.llm = get_llm()
 
+    @property
+    def collection(self) -> Collection:
+        return self.client.collections.get(settings.collection)
+
     def delete_source(self, source):
-        with WeaviateDB() as wdb:
-            coll = wdb.collections.get(self.settings.collection)
-            resp = coll.data.delete_many(where=Filter.by_property(name="source").equal(source))
-            return resp
+        return self.collection.data.delete_many(where=Filter.by_property(name="source").equal(source))
 
     def count_source(self, source) -> int:
-        with WeaviateDB() as wdb:
-            coll = wdb.collections.get(self.settings.collection)
-            response = coll.aggregate.over_all(total_count=True, filters=Filter.by_property("source").equal(source))
-            return response.total_count
+        response = self.collection.aggregate.over_all(total_count=True,
+                                                      filters=Filter.by_property("source").equal(source))
+        return response.total_count
 
     def check_sources_not_in_db(self, file_list):
         """
-        Check which files in the provided list exist as sources in Weaviate.
+        Check which files in the provided list are not yet indexed in Weaviate.
 
         Args:
-            file_list: List of file paths
+            file_list: List of file paths, their stems are the sources
 
         Returns:
-            A dictionary with file sources as keys and their count in the database as values
+            A list of sources that have no chunks in the database
         """
         # Extract source identifiers from file paths (assuming stem is used as source)
         sources = [file_path.stem for file_path in file_list]
 
         responses = []
-        with WeaviateDB() as wdb:
-            collection = wdb.collections.get(self.settings.collection)
+        collection = self.collection
+        batch = 100
 
-            batch = 100
+        for i in range(0, len(file_list), batch):
+            # Use the 'or' operator to check for any of the sources in a single query
+            batched_list = sources[i: i + batch].copy()
+            source_filter = Filter.by_property("source").contains_any(batched_list)
 
-            for i in range(0, len(file_list), batch):
-                # Use the 'or' operator to check for any of the sources in a single query
-                batched_list = sources[i: i + batch].copy()
-                source_filter = Filter.by_property("source").contains_any(batched_list)
+            # Use groupby to get counts for each source in one query
+            response = collection.aggregate.over_all(
+                group_by=GroupByAggregate(prop="source"),
+                total_count=True,
+                filters=source_filter,
+            )
+            if hasattr(response, 'groups'):
+                responses.extend(response.groups)
 
-                # Use groupby to get counts for each source in one query
-                response = collection.aggregate.over_all(
-                    group_by=GroupByAggregate(prop="source"),
-                    total_count=True,
-                    filters=source_filter,
-                )
-                if hasattr(response, 'groups'):
-                    responses.extend(response.groups)
+        # Sources that already have chunks in the database
+        indexed_sources = {group.grouped_by.value for group in responses}
 
-
-            # Create a dictionary of source -> count
-            source_counts = {group.grouped_by.value: group.total_count for group in responses}
-
-            # Add entries with zero count for sources not found in the database
-            sources_set = set(sources)
-            sources_counts_set = set(source_counts)
-
-            not_indexed_files_list = list(sources_set.difference(sources_counts_set))
-
-            return not_indexed_files_list
+        return list(set(sources).difference(indexed_sources))
 
     def check_if_collection_exists(self) -> bool:
-        with WeaviateDB() as wdb:
-            return wdb.collections.exists(self.settings.collection)
+        return self.client.collections.exists(settings.collection)
 
     def create_documents(self) -> Generator[list[Document], Any, None]:
-        json_path = self.settings.json_dir
+        json_path = settings.json_dir
 
         documents = []
         file_list = natsorted(json_path.glob("*.json"), reverse=True)
@@ -164,30 +159,28 @@ class ContextualIndexing:
         if i > 0:
             yield documents
 
-    def insert_documents(self, ):
-        with WeaviateDB() as wdb:
-            wvs = WeaviateVectorStore(wdb, index_name=self.settings.collection, text_key=self.settings.text_key,
-                                      embedding=get_embeddings())
-            for docs in self.create_documents():
-                wvs.add_documents(documents=docs)
+    def insert_documents(self):
+        # Creating the collection is explicit and only happens here, on the write path
+        if not self.check_if_collection_exists():
+            create_collection(self.client, settings.collection)
+
+        wvs = WeaviateVectorStore(self.client, index_name=settings.collection, text_key=settings.text_key,
+                                  embedding=get_embeddings())
+        for docs in self.create_documents():
+            wvs.add_documents(documents=docs)
 
     def list_all_documents_with_vectors(self):
-        with WeaviateDB() as wdb:
-            collection = wdb.collections.get(self.settings.collection)
-
-            for item in collection.iterator(
-                    include_vector=True
-            ):
-                logging.debug(item.properties)
-                logging.debug(item.vector)
+        for item in self.collection.iterator(include_vector=True):
+            logging.debug(item.properties)
+            logging.debug(item.vector)
 
     def delete_collection(self):
-        with WeaviateDB() as wdb:
-            wdb.collections.delete(self.settings.collection)
+        self.client.collections.delete(settings.collection)
 
 
 if __name__ == "__main__":
-    ci = ContextualIndexing()
-    ci.insert_documents()
-    # ci.delete_collection()
-    # ci.list_all_documents_with_vectors()
+    with connect() as weaviate_client:
+        ci = ContextualIndexing(weaviate_client)
+        ci.insert_documents()
+        # ci.delete_collection()
+        # ci.list_all_documents_with_vectors()

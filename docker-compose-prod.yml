@@ -42,6 +42,30 @@ services:
     networks:
       - rag_network
 
+  embeddings:
+    # Local text embeddings server; 86-* images target Ampere GPUs (RTX 30xx), use cpu-* without a GPU
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.9.4
+    command:
+    - --model-id
+    - ${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+    - --max-batch-tokens
+    - '65536'
+    - --auto-truncate
+    expose:
+      - "80"
+    volumes:
+      - hf_cache:/data
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+    networks:
+      - rag_network
+
   postgres:
     image: postgres:17.4
     restart: always
@@ -91,18 +115,27 @@ services:
     environment:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      EMBEDDING_URL: http://embeddings:80
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
       JWT_SECRET: ${JWT_SECRET}
       ALGORITHM: ${ALGORITHM}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       PG_USER: ${PG_USER}
       PG_PASS: ${PG_PASS}
       PG_HOST: ${PG_HOST}
+      PG_DB: ${PG_DB:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_HOST: ${REDIS_HOST}
       VITE_API_BASE_URL: ${VITE_API_BASE_URL}
       WEAVIATE_HOST: ${WEAVIATE_HOST}
       HOST: ${HOST}
       PORT: ${PORT}
+    depends_on:
+      - embeddings
+      - postgres
+      - redis
+      - weaviate
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.app.rule=Host(`${HOST}`)"
@@ -112,6 +145,7 @@ services:
       - rag_network
 
 volumes:
+  hf_cache:
   weaviate_data:
   pg_data:
   redis_data:

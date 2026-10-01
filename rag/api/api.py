@@ -4,7 +4,7 @@ Api file with routs
 import json
 import logging
 from pathlib import Path
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import List, AsyncGenerator, Optional
 from contextlib import asynccontextmanager
 
@@ -20,49 +20,38 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from langchain_core.messages import HumanMessage, AIMessage
 from jose import JWTError, jwt
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from rag.api.models import MessageResponse, TokenData, UserResponse, UserCreate, \
-    Token, ConversationResponse, RefreshRequest
+    Token, ConversationResponse, RefreshRequest, ChatRequest
 from rag.api.utils import get_password_hash, authenticate_user, create_access_token, \
     create_refresh_token, store_refresh_token, is_token_blacklisted, validate_refresh_token, \
     invalidate_refresh_token, logout_operation, invalidate_all_user_tokens, \
     get_user_conversation_newest, get_user_conversation_count, get_user_conversations, \
-    get_one_conversation, generate_unique_thread_id, get_conversation_with_check
-from rag.settings import DBSettings, TokenSettings, Settings, HostSettings
-from rag.db.db_objects import User, LoginHistory, Base, CheckpointBlob, CheckpointWrite, Checkpoint
-from rag.rag_pipeline import RAG, content_to_text
+    get_one_conversation, generate_thread_id, get_conversation_with_check
+from rag.settings import db_settings, token_settings, host_settings
+from rag.db.db_objects import User, LoginHistory, Base, ConversationTitle
+from rag.rag_pipeline import RAG
 
-db_settings = DBSettings()
-main_settings = Settings()
-token_settings = TokenSettings()
-host_settings = HostSettings()
-
-POSTGRES_DB_URI = f"postgresql+asyncpg://{db_settings.user}:{db_settings.password}@{db_settings.host}:{db_settings.db_port}/{db_settings.user}"
-engine = create_async_engine(POSTGRES_DB_URI, echo=False)
+engine = create_async_engine(db_settings.uri("postgresql+asyncpg"), echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-rag = RAG()
-
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    # Startup: create tables before serving requests
+    # Startup: create tables and open the connections used by the RAG pipeline before serving requests
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    application.state.rag = await RAG.create()
 
     yield  # This is where FastAPI serves requests
 
     # Shutdown: cleanup resources
+    await application.state.rag.close()
     await engine.dispose()
 
 
@@ -92,23 +81,19 @@ async def get_db():
             await session.close()
 
 
-async def get_messages(thread_id: str):
+def get_rag(request: Request) -> RAG:
+    """
+    Dependency to get the RAG pipeline created at startup
+    """
+    return request.app.state.rag
+
+
+async def get_messages(rag: RAG, thread_id: str) -> List[MessageResponse]:
     """
     Return all ai/human messages for a chat conversation defined by thread_id
     """
-    config = {"configurable": {"thread_id": thread_id}}
-
-    state_history = list(rag.get_state_history(config))
-    conversation = []
     messages_list = []
-
-    # Collect the state history by consuming the async iterator
-
-    if state_history:
-        # Assuming the first item contains the messages
-        conversation = state_history[0][0]['messages']
-
-    for message in conversation:
+    for message in await rag.get_messages(thread_id):
         if isinstance(message, HumanMessage):
             msg_type = "human"
         elif isinstance(message, AIMessage):
@@ -116,12 +101,10 @@ async def get_messages(thread_id: str):
         else:
             continue
 
-        content = content_to_text(message.content)
-        if not content:
+        if not message.text:
             continue
 
-        message_state = MessageResponse(content=content, type=msg_type, thread_id=thread_id)
-        messages_list.append(message_state)
+        messages_list.append(MessageResponse(content=message.text, type=msg_type, thread_id=thread_id))
 
     return messages_list
 
@@ -436,69 +419,79 @@ async def list_conversations(
     return convos
 
 
-async def stream_generator(query: str, thread_id: str, user_id: int, db: AsyncSession) -> AsyncGenerator[str, None]:
-    # Send an initial event to establish the connection and provide thread_id
-    json_ret = json.dumps({"type": "connection_established", "content": "[START]", "thread_id": thread_id})
-    yield f"data: {json_ret}\n\n"
+async def stream_generator(rag: RAG, query: str, thread_id: str,
+                           title_task: Optional[asyncio.Task]) -> AsyncGenerator[str, None]:
+    """
+    Stream the answer as server-sent events. For a new conversation, title_task generates its title
+    concurrently with the answer, and the title is saved and sent in the final event.
+    """
+    def event(event_type: str, content: str) -> str:
+        return f"data: {json.dumps({'type': event_type, 'content': content, 'thread_id': thread_id})}\n\n"
 
+    yield event("connection_established", "[START]")
     try:
-        # Stream content from RAG
-        for token in rag.stream(query=query, thread_id=thread_id, user_id=user_id):
-            # Add thread_id to each token message
-            message_data = {"type": "message", "content": token, "thread_id": thread_id}
-            # Ensure the message is properly JSON escaped
-            escaped_message = json.dumps(message_data)
-            # Format as a proper SSE message
-            yield f"data: {escaped_message}\n\n"
-            # Yield to the event loop so each chunk is flushed to the client immediately
-            await asyncio.sleep(0)
+        async for token in rag.astream(query=query, thread_id=thread_id):
+            yield event("message", token)
+
+        title = ""
+        if title_task:
+            try:
+                title = await title_task
+            except Exception:
+                logging.exception("Error generating conversation title")
+                title = query[:50]
+            # The request's database session is closed once streaming starts, so use a new one
+            async with AsyncSessionLocal() as db:
+                convo = await get_one_conversation(db, thread_id)
+                convo.title = title
+                await db.commit()
+
+        yield event("streaming_finished", title)
 
     except Exception as e:
         logging.exception("Error in streaming")
-        error_msg = json.dumps({"type": "error", "content": str(e), "thread_id": thread_id})
-        yield f"data: {error_msg}\n\n"
-        return
+        yield event("error", str(e))
 
-    convo = await get_one_conversation(db, thread_id)
-    title = convo.title if convo else ""
-    json_ret = json.dumps({"type": "streaming_finished", "content": title, "thread_id": thread_id})
-    # Send an end message with thread_id
-    yield f"data: {json_ret}\n\n"
+    finally:
+        # Stop the title request if the answer failed or the client disconnected
+        if title_task and not title_task.done():
+            title_task.cancel()
 
 
-@app.get("/conversations/stream")
+@app.post("/conversations/stream")
 async def stream_messages(
-        query: str,
-        thread_id: str = None,
+        chat: ChatRequest,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        rag: RAG = Depends(get_rag),
 ):
-    logging.info("I'm in conversation %s", thread_id)
-    # Check if thread_id exists in database
-    if thread_id:
-        convo = await get_one_conversation(db, thread_id)
-        if not convo:
-            # Thread ID was provided but doesn't exist, generate a new one
-            thread_id = await generate_unique_thread_id(db)
-        elif convo.user_id != current_user.id:
-            # Thread exists but belongs to another user
-            raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
-    else:
-        # No thread_id provided, generate a new one
-        thread_id = await generate_unique_thread_id(db)
+    """
+    Send a message and stream the answer. Without a known thread_id a new conversation is created.
+    """
+    convo = await get_one_conversation(db, chat.thread_id) if chat.thread_id else None
+    if convo and convo.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
-    # Set response headers
+    title_task = None
+    if convo:
+        thread_id = convo.thread_id
+    else:
+        # Register the conversation before answering, so it belongs to the user even if the answer fails
+        thread_id = generate_thread_id()
+        db.add(ConversationTitle(thread_id=thread_id, title="New chat", created_at=datetime.now(),
+                                 user_id=current_user.id))
+        await db.commit()
+        title_task = asyncio.create_task(rag.generate_title(chat.query))
+
     headers = {
         "X-Thread-ID": thread_id,
         "Access-Control-Expose-Headers": "X-Thread-ID",
-        "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
     }
 
-    # Return a StreamingResponse
     return StreamingResponse(
-        stream_generator(query, thread_id, current_user.id, db),
+        stream_generator(rag, chat.query, thread_id, title_task),
         media_type="text/event-stream",
         headers=headers
     )
@@ -524,7 +517,8 @@ async def get_conversation(
 async def get_conversation_messages(
         thread_id: str,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        rag: RAG = Depends(get_rag),
 ) -> List[MessageResponse]:
     """
     Return all messages for a conversation.
@@ -538,7 +532,7 @@ async def get_conversation_messages(
         raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
 
     # Get messages
-    messages = await get_messages(thread_id)
+    messages = await get_messages(rag, thread_id)
     return messages
 
 
@@ -573,10 +567,11 @@ async def update_conversation_title(
 async def delete_conversation(
         thread_id: str,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        rag: RAG = Depends(get_rag),
 ):
     """
-    Delete a conversation from 4 tables
+    Delete a conversation with its message history
     """
     # Check if conversation exists and user has access
     convo = await get_one_conversation(db, thread_id)
@@ -587,18 +582,8 @@ async def delete_conversation(
     if convo.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this conversation")
 
-    # Delete all checkpoint data related to this thread_id
-    # Start with checkpoint_blobs
-    stmt = delete(CheckpointBlob).where(CheckpointBlob.thread_id == thread_id)
-    await db.execute(stmt)
-
-    # Delete checkpoint_writes
-    stmt = delete(CheckpointWrite).where(CheckpointWrite.thread_id == thread_id)
-    await db.execute(stmt)
-
-    # Delete checkpoints
-    stmt = delete(Checkpoint).where(Checkpoint.thread_id == thread_id)
-    await db.execute(stmt)
+    # Delete the message history saved by the LangGraph checkpointer
+    await rag.delete_thread(thread_id)
 
     # Finally delete the conversation itself
     await db.delete(convo)

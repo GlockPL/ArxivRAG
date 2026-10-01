@@ -1,5 +1,4 @@
 import { defineStore } from 'pinia'
-import { EventSource } from 'eventsource'
 import axios from 'axios'
 import { renderMarkdown } from '@/utils/markdownProcessor'
 
@@ -53,6 +52,70 @@ const tokenExpiresSoon = (token) => {
         return payload.exp * 1000 < Date.now() + 30000
     } catch (e) {
         return true
+    }
+}
+
+// POST a chat message and call onEvent with every server-sent event of the streamed answer
+const streamChat = async (body, onEvent, signal) => {
+    const authStore = useAuthStore()
+    const send = (token) => fetch(`${API_BASE_URL}/conversations/stream`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(body),
+        signal
+    })
+
+    // fetch bypasses the axios interceptor, so refresh tokens here and retry once on 401.
+    // Like the interceptor, log out when no valid token can be obtained.
+    const getToken = async (forceRefresh) => {
+        try {
+            return forceRefresh ? await refreshTokens() : await authStore.getFreshToken()
+        } catch (error) {
+            authStore.logout()
+            throw error
+        }
+    }
+
+    let response = await send(await getToken(false))
+    if (response.status === 401) {
+        response = await send(await getToken(true))
+    }
+
+    if (!response.ok) {
+        let detail = `Request failed with status ${response.status}`
+        try {
+            detail = (await response.json()).detail || detail
+        } catch (e) {
+            // Keep the generic message when the body is not JSON
+        }
+        throw new Error(detail)
+    }
+
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buffer = ''
+    while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += value
+
+        // Events are separated by a blank line, each carries one JSON payload in its data lines
+        let boundary
+        while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+            const rawEvent = buffer.slice(0, boundary)
+            buffer = buffer.slice(boundary + 2)
+            const data = rawEvent
+                .split('\n')
+                .filter(line => line.startsWith('data:'))
+                .map(line => line.slice(5).trimStart())
+                .join('\n')
+            if (data) {
+                onEvent(JSON.parse(data))
+            }
+        }
     }
 }
 
@@ -269,7 +332,9 @@ export const useChatStore = defineStore('chat', {
         openMenuId: null,
         paginationLimit: parseInt(localStorage.getItem('paginationLimit')) || 12,
         paginationOffset: 0,
-        newMessage: ''
+        newMessage: '',
+        // Sidebar drawer on small screens
+        sidebarOpen: false
     }),
 
     actions: {
@@ -336,6 +401,7 @@ export const useChatStore = defineStore('chat', {
 
         setActiveChat(id) {
             this.openMenuId = null
+            this.sidebarOpen = false
             this.activeChatId = id
 
             // Only load history once; refetching would replace a message that is still streaming in
@@ -405,12 +471,15 @@ export const useChatStore = defineStore('chat', {
 
             this.isSending = true
 
-            let es = null
+            const controller = new AbortController()
             let timeoutId = null
+            let finished = false
 
             const finish = (errorText = null) => {
+                if (finished) return
+                finished = true
                 clearTimeout(timeoutId)
-                if (es) es.close()
+                controller.abort()
                 if (errorText) {
                     aiMessage.content += `${aiMessage.content ? '\n\n' : ''}**Error:** ${errorText}`
                 }
@@ -424,78 +493,68 @@ export const useChatStore = defineStore('chat', {
                 timeoutId = setTimeout(() => finish('Response timed out. Please try again.'), STREAM_IDLE_TIMEOUT_MS)
             }
 
-            try {
-                // EventSource bypasses the axios interceptor, so make sure the token is fresh up front
-                const token = await useAuthStore().getFreshToken()
-                const params = new URLSearchParams({ query: messageText, thread_id: chat.id })
-
-                es = new EventSource(`${API_BASE_URL}/conversations/stream?${params}`, {
-                    fetch: (input, init) =>
-                        fetch(input, {
-                            ...init,
-                            headers: {
-                                ...init.headers,
-                                'Authorization': `Bearer ${token}`
-                            }
-                        })
-                })
+            const handleEvent = (parsedData) => {
                 armIdleTimeout()
 
-                es.addEventListener('message', (event) => {
-                    let parsedData
-                    try {
-                        parsedData = JSON.parse(event.data)
-                    } catch (e) {
-                        console.error("Error parsing JSON:", e)
-                        return
-                    }
-                    armIdleTimeout()
-
-                    switch (parsedData.type) {
-                        case "connection_established":
-                            break
-
-                        case "message":
-                            aiMessage.content += parsedData.content
-                            break
-
-                        case "streaming_finished":
-                            finish()
-
-                            // A new chat gets its real thread_id and generated title from the server
-                            if (chat.id.startsWith('temp-') && parsedData.thread_id) {
-                                const wasActive = this.activeChatId === chat.id
-                                chat.messages.forEach(msg => {
-                                    msg.thread_id = parsedData.thread_id
-                                })
-                                chat.id = parsedData.thread_id
-                                chat.name = parsedData.content || chat.name
-                                chat.editingName = chat.name
-                                if (wasActive) {
-                                    this.activeChatId = parsedData.thread_id
-                                }
+                switch (parsedData.type) {
+                    case "connection_established":
+                        // A new chat gets its real thread_id as soon as the server has created the conversation
+                        if (chat.id.startsWith('temp-') && parsedData.thread_id) {
+                            const wasActive = this.activeChatId === chat.id
+                            chat.messages.forEach(msg => {
+                                msg.thread_id = parsedData.thread_id
+                            })
+                            chat.id = parsedData.thread_id
+                            if (wasActive) {
+                                this.activeChatId = parsedData.thread_id
                             }
-                            break
+                        }
+                        break
 
-                        case "error":
-                            console.error("Server error:", parsedData.content)
-                            finish(parsedData.content || 'Unknown error')
-                            break
+                    case "message":
+                        aiMessage.content += parsedData.content
+                        break
 
-                        default:
-                            console.log("Unknown message type:", parsedData.type)
-                    }
-                })
+                    case "streaming_finished":
+                        finish()
+                        // The generated title of a new conversation, the header types it out once
+                        if (parsedData.content) {
+                            chat.animateTitle = true
+                            chat.name = parsedData.content
+                            chat.editingName = chat.name
+                        }
+                        break
 
-                // Closing here also stops EventSource from reconnecting and re-sending the query
-                es.addEventListener('error', (error) => {
-                    console.error('EventSource error:', error)
-                    finish('Connection failed. Please try again.')
-                })
-            } catch (error) {
-                console.error('Error setting up message stream:', error)
-                finish(error.message || 'Failed to load response')
+                    case "error":
+                        console.error("Server error:", parsedData.content)
+                        finish(parsedData.content || 'Unknown error')
+                        break
+
+                    default:
+                        console.log("Unknown message type:", parsedData.type)
+                }
             }
+
+            try {
+                armIdleTimeout()
+                await streamChat(
+                    { query: messageText, thread_id: chat.id.startsWith('temp-') ? null : chat.id },
+                    handleEvent,
+                    controller.signal
+                )
+                if (!finished) {
+                    finish('Connection closed before the answer finished. Please try again.')
+                }
+            } catch (error) {
+                // finish() aborts the request, so an abort after it is expected
+                if (finished) return
+                console.error('Error streaming message:', error)
+                finish(error.message || 'Connection failed. Please try again.')
+            }
+        },
+
+        toggleSidebar(open = !this.sidebarOpen) {
+            this.sidebarOpen = open
         },
 
         toggleMenu(chatId) {

@@ -7,22 +7,19 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "langchain-weaviate>=0.0.4",
+    "langchain-weaviate>=0.0.8",
     "pydantic[email]>=2.10.6",
     "pydantic-settings>=2.7.1",
-    "weaviate-client>=4.11.0",
-    "langchain-google-genai>=2.0.9",
-    "langgraph>=0.2.74",
-    "langchain>=0.3.19",
-    "langchain-openai>=0.3.6",
-    "langgraph-checkpoint-postgres>=2.0.15",
-    "fastapi>=0.115.8",
+    "weaviate-client>=4.23",
+    "langchain-google-genai>=4.4",
+    "langgraph>=1.2",
+    "langchain-openai>=1.6",
+    "langgraph-checkpoint-postgres>=3.1",
+    "fastapi>=0.142",
     "uvicorn>=0.34.0",
     "python-jose>=3.4.0",
     "python-multipart>=0.0.20",
-    "psycopg2-binary>=2.9.10",
     "redis>=5.2.1",
-    "psycopg-binary>=3.2.5",
     "json-repair>=0.39.1",
     "natsort>=8.4.0",
     "google-genai>=1.5.0",
@@ -34,6 +31,8 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "tqdm>=4.67.1",
     "sqlalchemy>=2.0.43",
+    "langchain-core>=1.6",
+    "psycopg[binary,pool]>=3.2",
 ]
 
 [dependency-groups]
