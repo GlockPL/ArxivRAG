@@ -1,0 +1,13 @@
+.git
+.idea
+.venv
+.env
+**/__pycache__
+**/node_modules
+rag/web/arxiv_ai_chat/dist
+json_gemini
+embeddings
+backups
+tmp
+*.dat
+*.png

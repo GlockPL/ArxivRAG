@@ -21,19 +21,30 @@ curl -X POST -H "Content-Type: application/json" -d '{"id": "arxiv-backup-v_1_0"
 This will load the content of the backup into the database.     
 Connet through browser with `http://localhost` and register new user.
 
+### Embeddings
+Article sections are embedded locally with a Qwen3 embedding model served by
+[text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference) (the `embeddings`
+service in the compose files, it needs an NVIDIA GPU). The model is set with `EMBEDDING_MODEL`
+(default `Qwen/Qwen3-Embedding-0.6B`).
+
+To re-embed the existing chunks of a Weaviate collection with the local model (resumable, the vectors and texts
+are also saved to `./embeddings`):
+```
+uv run python -m rag.reembed bench --limit 2000   # optional: measure throughput
+uv run python -m rag.reembed embed                # read chunks from the Arxiv collection and embed them
+uv run python -m rag.reembed load                 # load them into the ArxivQwen3 collection
+```
+
 ### Indexing data
 Run docker compose:
 ```
 docker compose up -d
 ```
-This will start weaviate database.
-Than on python 3.11 run:
+This will start weaviate, the embeddings server and the other databases.
+Then with [uv](https://docs.astral.sh/uv/) installed run:
 ```
- poetry install
-```
-next
-```
-poetry run ./rag/indexing.py
+uv sync
+uv run python -m rag.indexing
 ```
 
 ### Creating backup for weaviate:
